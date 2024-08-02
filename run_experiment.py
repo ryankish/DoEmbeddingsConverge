@@ -40,18 +40,14 @@ def save_loss(train_perplexities, valid_perplexities, test_perplexity, test_epoc
     path = f"experiments/{opt.experiment_id}/models/{model_id}/perplexities.csv"
     df.to_csv(path)
 
-# def save_model(model, model_id, epoch, opt):
-#     path = f"experiments/{opt.experiment_id}/models/{model_id}/checkpoint_{epoch}.pt"
-#     torch.save(model.state_dict(), path)
-
 def load_checkpoint(model, optimizer, path):
-    checkpoint = torch.load(path)
+    checkpoint = torch.load(path, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     print("Model and optimizer states have been loaded successfully.")
 
 def load_model(model, checkpoint_path):
-    checkpoint = torch.load(checkpoint_path)
+    checkpoint = torch.load(checkpoint_path, weights_only=True)
     model.load_state_dict(checkpoint['model_state_dict'])
 
 def save_checkpoint(model, optimizer, epoch, model_id, opt):
@@ -95,7 +91,6 @@ def train_model(model, optimizer, opt, model_id):
     print(stars_colored)
 
     save_embeddings(model, model_id, 0, opt)
-    # save_model(model, model_id, 0, opt)
     save_checkpoint(model, optimizer, 0, model_id, opt)
 
     criterion = nn.CrossEntropyLoss()
@@ -150,9 +145,6 @@ def train_model(model, optimizer, opt, model_id):
     last_epoch = opt.epochs
     plot_perplexity(train_perplexities, valid_perplexities, model_id, opt)
     save_loss(train_perplexities, valid_perplexities, test_perplexiity, last_epoch, model_id, opt)
-    # save_model(model, model_id, opt, opt.epochs)
-
-   
     return model
 
 def test_model(model, opt, dataset='valid'):
@@ -220,9 +212,10 @@ def experiment(args_dict):
     opt.make_vars(args_dict)
     print('opt.epochs', opt.epochs)
     opt.device = 0 if opt.no_cuda is False else -1
-    if opt.device == 0:
-        assert torch.cuda.is_available()
-    opt.device = torch.device("cuda:0")
+    if not opt.no_cuda and torch.cuda.is_available():
+        opt.device = torch.device("cuda:0")
+    else:
+        opt.device = torch.device("cpu")
 
     directory = "experiments/%s" % (opt.experiment_id)
     if os.path.exists(directory):
@@ -410,6 +403,7 @@ if __name__ == '__main__':
     args2_dict = {
         'experiment_id': experiment_id,
         'seed': 0,
+        'device': 0,
         'no_cuda': False,
         'SGDR': False,
         'epochs': 1,
@@ -426,7 +420,6 @@ if __name__ == '__main__':
         'threshold': 3,
         'norm': 2.0,
         'verbose': False,
-        'device': 0,
         'time_name': None,
         'train_subset': None, # for testing purposes only
         'train': None,
