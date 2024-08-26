@@ -9,7 +9,6 @@ import math
 import numpy as np
 import pandas as pd
 
-
 import time
 import os
 import shutil
@@ -19,15 +18,17 @@ from tqdm import tqdm
 import matplotlib.pyplot as plt
 import seaborn as sns
 
+import json
+import logging
+
 from data_utils import read_corpus, WikiDataset, create_masks
 from init_models import init_models
+from utils.color_print import green, red, cyan, orange
+from utils.options import Options
 
 # Disable tokenizers parallelism
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-CYAN = "\033[96m"
-GREEN = "\033[92m"
-RESET = "\033[0m"
 
 def calculate_mse_torch(tensor1, tensor2):
     return torch.mean((tensor1 - tensor2) ** 2).item()
@@ -44,7 +45,7 @@ def load_checkpoint(model, optimizer, path):
     checkpoint = torch.load(path, weights_only=False)
     model.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-    print("Model and optimizer states have been loaded successfully.")
+    logging.info("Model and optimizer states have been loaded successfully.")
 
 def load_model(model, checkpoint_path):
     checkpoint = torch.load(checkpoint_path, weights_only=True)
@@ -56,7 +57,7 @@ def save_checkpoint(model, optimizer, epoch, model_id, opt):
         'model_state_dict': model.state_dict(),
         'optimizer_state_dict': optimizer.state_dict()
     }, path)
-    print(f"Checkpoint saved at epoch {epoch} for model {model_id}")
+    logging.info(f"Checkpoint saved at epoch {epoch} for model {model_id}")
 
 
 def save_embeddings(model, model_id, epoch, opt):
@@ -68,7 +69,7 @@ def save_embeddings(model, model_id, epoch, opt):
 def create_folder_if_not_exists(folder_path):
     if not os.path.exists(folder_path):
         os.makedirs(folder_path)
-        print(f"'{folder_path}' dir created.")
+        logging.info(f"'{folder_path}' dir created.")
 
 def clear_directory(directory):
     for filename in os.listdir(directory):
@@ -79,16 +80,15 @@ def clear_directory(directory):
             elif os.path.isdir(file_path):
                 shutil.rmtree(file_path)  # Remove the directory and all its contents
         except Exception as e:
-            print(f'Failed to delete {file_path}. Reason: {e}')
-    print('Directory cleared')
+            logging.error(f'Failed to delete {file_path}. Reason: {e}')
+    logging.info('Directory cleared')
 
 def train_model(model, optimizer, opt, model_id):
     train_str = f"Training Model {model_id}"
-    train_str_colored = f"{CYAN}{train_str}{RESET}"
-    stars_colored = f"{CYAN}{'*' * len(train_str)}{RESET}"
-    print(stars_colored)
-    print(train_str_colored)
-    print(stars_colored)
+    stars = '*' * len(train_str)
+    cyan(stars)
+    cyan(train_str)
+    cyan(stars)
 
     save_embeddings(model, model_id, 0, opt)
     save_checkpoint(model, optimizer, 0, model_id, opt)
@@ -103,7 +103,7 @@ def train_model(model, optimizer, opt, model_id):
         model.train()
         total_loss = 0
         total_batches = 0
-        print(f"Epoch: {epoch} ... training")
+        logging.info(f"Epoch: {epoch} ... training")
         for input_ids, targets in tqdm(train_loader):
             input_ids = input_ids.to(opt.device)
             targets = targets.to(opt.device)
@@ -124,27 +124,26 @@ def train_model(model, optimizer, opt, model_id):
 
         avg_loss = total_loss/total_batches
         train_perplexity = math.exp(avg_loss)
-        print(f'Epoch: {epoch} - Train Perplexity: {train_perplexity}')
+        logging.info(f'Epoch: {epoch} - Train Perplexity: {train_perplexity}')
         train_perplexities.append(train_perplexity)
 
         valid_perplexity = test_model(model, opt, dataset='valid')
-        print(f'Epoch: {epoch} - Valid Perplexity: {valid_perplexity}')
+        logging.info(f'Epoch: {epoch} - Valid Perplexity: {valid_perplexity}')
         valid_perplexities.append(valid_perplexity)
 
         # save embeddings
         save_embeddings(model, model_id, epoch, opt)
         if (epoch) % 10 == 0 or epoch==1:
-            #save_model(model, model_id, epoch, opt)
             save_checkpoint(model, optimizer, epoch, model_id, opt)
 
 
     # Done training
-    test_perplexiity = test_model(model, opt, dataset='test')
-    print(f'Test Perplexity: {test_perplexiity}')
+    test_perplexity = test_model(model, opt, dataset='test')
+    logging.info(f'Test Perplexity: {test_perplexity}')
 
     last_epoch = opt.epochs
     plot_perplexity(train_perplexities, valid_perplexities, model_id, opt)
-    save_loss(train_perplexities, valid_perplexities, test_perplexiity, last_epoch, model_id, opt)
+    save_loss(train_perplexities, valid_perplexities, test_perplexity, last_epoch, model_id, opt)
     return model
 
 def test_model(model, opt, dataset='valid'):
@@ -189,17 +188,9 @@ def plot_perplexity(train_perplexities, valid_perplexities, model_id, opt):
     plt.ylabel('Perplexity')
     plt.legend()
     path = f'experiments/{opt.experiment_id}/models/{model_id}/Model {model_id} Perplexity.png'
-    print('Saving to', path)
+    logging.info(f'Saving to {path}')
     plt.savefig(path)
 
-
-class Options:
-    def __init__(self) -> None:
-        pass
-
-    def make_vars(self, args: dict):
-        for key, val in args.items():
-            self.__setattr__(key, val)
 
 def freeze_weights(model):
     for param in model.parameters():
@@ -210,28 +201,27 @@ def experiment(args_dict):
 
     opt = Options()
     opt.make_vars(args_dict)
-    print('opt.epochs', opt.epochs)
     opt.device = 0 if opt.no_cuda is False else -1
     if not opt.no_cuda and torch.cuda.is_available():
         opt.device = torch.device("cuda:0")
     else:
         opt.device = torch.device("cpu")
 
-    directory = "experiments/%s" % (opt.experiment_id)
+    directory = f"experiments/{opt.experiment_id}"
     if os.path.exists(directory):
-        print(f'Experiment {opt.experiment_id} already exists')
-        print('Do you wish to overwrite?')
-        print('y/n')
-        response = input()
-        if response == 'y':
-            print('Overwriting')
+        logging.info(f'Experiment {opt.experiment_id} already exists')
+        logging.info('Do you wish to overwrite?')
+        logging.info('y/n')
+        response = input('Do you wish to overwrite? (y/n): ')
+        if response.lower() == 'y':
+            logging.info('Overwriting')
             clear_directory(directory)
         else:
-            print('Exiting')
+            logging.info('Exiting')
             sys.exit()
     else:
         os.makedirs(directory)
-        print('Experiment directory created (%s)' % (directory))
+        logging.info(f'Experiment directory created ({directory})')
 
     model1_dir = f'experiments/{opt.experiment_id}/models/1/embeddings'
     if not os.path.exists(model1_dir):
@@ -242,11 +232,11 @@ def experiment(args_dict):
         os.makedirs(model2_dir)
 
     exp_str = f'='*10 + f' Running Experiment {opt.experiment_id} ' + '=' * 10
-    border = f"{GREEN}{'=' * len(exp_str)}{RESET}"
-    exp_str = f"{GREEN}{exp_str}{RESET}"
-    print(border)
-    print(exp_str)
-    print(border)
+    border = '=' * len(exp_str)
+    green(border)
+    green( f'='*10 + f' Running Experiment {opt.experiment_id} ' + '=' * 10)
+    green(border)
+
 
     start_time = time.time()
 
@@ -282,14 +272,14 @@ def experiment(args_dict):
         with torch.no_grad():
             nn.init.xavier_normal_(model2.decoder.embed.embed.weight)
         mse = calculate_mse_torch(model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight)
-        print('initial mse from prelaoded and reinit', mse)
+        logging.info(f'initial mse from preloaded and reinit: {mse}')
     
 
     # count parameters
     model_parameters = filter(lambda p: p.requires_grad, model1.parameters())
     params = sum([np.prod(p.size()) for p in model_parameters])
-    text = 'total params: %d' % (params)
-    print(text)
+    red(f'total params: {params}')
+    logging.info(f'total params: {params}')
 
     opt.optimizer1 = torch.optim.Adam(model1.parameters(), lr=opt.lr, betas=(0.9, 0.98), eps=1e-9)
     opt.optimizer2 = torch.optim.Adam(model2.parameters(), lr=opt.lr, betas=(0.9, 0.98), eps=1e-9)
@@ -303,12 +293,66 @@ def experiment(args_dict):
         model2 = train_model(model2, opt.optimizer2, opt, model_id=2)
 
 
-    print(f"{GREEN}Time taken: {time.time() - start_time}{RESET}")
+    green(f"Time taken: {time.time() - start_time}")
+
+
+
+def main():
+    create_folder_if_not_exists('experiments')
+
+    experiment_id = 2
+    experiment2_embedding_size = 128
+    model1_embed_init = 'glorot_uniform'
+    model2_embed_init = 'glorot_uniform'
+
+    args_dict = {
+        'experiment_id': experiment_id,
+        'seed': 0,
+        'device': 0,
+        'no_cuda': False,
+        'SGDR': False,
+        'epochs': 2, # TODO: plot freezes
+        'model1_embed_init': model1_embed_init,
+        'model2_embed_init': model2_embed_init,
+        'd_model': experiment2_embedding_size,
+        'n_layers': 6,
+        'heads': 8,
+        'dropout': 0.1,
+        'batchsize': 3,
+        'printevery': 1, # TODO: implement
+        'lr': 0.00001,
+        'seqlen': 512,
+        'threshold': 3,
+        'norm': 2.0,
+        'verbose': False,
+        'time_name': None,
+        'train_subset': None, # for testing purposes only
+        'train': None,
+        'valid': None,
+        'test': None,
+        'optimizer': None,
+        'sched': None,
+        'plot_title': None,
+        'lock_weights': True,
+        'starter_model_path': 'experiments/1/models/1/checkpoint_40.pt',
+    }
+
+    log_filename = f'experiments/{experiment_id}/experiment_{experiment_id}.log'
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(levelname)s - %(message)s'
+    )
+    file_handler = logging.FileHandler(log_filename)
+    logging.getLogger().addHandler(file_handler)
+
+
+    logging.info('Experiment arguments: %s', json.dumps(args_dict, indent=4))
+    
+    experiment(args_dict)
 
 if __name__ == '__main__':
 
-    create_folder_if_not_exists('experiments')
-
+    main()
 
     # Experiment 0
     # experiment_id = 0
@@ -395,41 +439,4 @@ if __name__ == '__main__':
     # plot_perplexity(train_perplexities, valid_perplexities, model_id, opt)
 
     # Experiment 2
-    experiment_id = 2
-    experiment2_embedding_size = 128
-    model1_embed_init = 'glorot_uniform'
-    model2_embed_init = 'glorot_uniform'
-
-    args2_dict = {
-        'experiment_id': experiment_id,
-        'seed': 0,
-        'device': 0,
-        'no_cuda': False,
-        'SGDR': False,
-        'epochs': 1,
-        'model1_embed_init': model1_embed_init,
-        'model2_embed_init': model2_embed_init,
-        'd_model': experiment2_embedding_size,
-        'n_layers': 6,
-        'heads': 8,
-        'dropout': 0.1,
-        'batchsize': 3,
-        'printevery': 100,
-        'lr': 0.00001,
-        'seqlen': 512,
-        'threshold': 3,
-        'norm': 2.0,
-        'verbose': False,
-        'time_name': None,
-        'train_subset': None, # for testing purposes only
-        'train': None,
-        'valid': None,
-        'test': None,
-        'optimizer': None,
-        'sched': None,
-        'plot_title': None,
-        'lock_weights': True,
-        'starter_model_path': 'experiments/1/models/1/checkpoint_40.pt',
-    }
-
-    experiment(args2_dict)
+    
