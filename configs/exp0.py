@@ -1,7 +1,7 @@
 from box import Box
 
 experiment_config = Box({
-        'experiment_core': {
+        'core': {
                 'experiment_id': 0,
                 'model1_embed_init': 'glorot_uniform',
                 'model2_embed_init': 'glorot_uniform',
@@ -37,12 +37,12 @@ experiment_config = Box({
             'no_cuda': False,
             'device': "cuda:0", 
         },
-        'set_programmatically': {
-            'train': None,
-            'valid': None,
-            'test': None,
-            'optimizer': None,
-        }
+    #     'set_programmatically': {
+    #         'train': None,
+    #         'valid': None,
+    #         'test': None,
+    #         'optimizer': None,
+    #     }
     })
 
 

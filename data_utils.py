@@ -15,21 +15,13 @@ def read_corpus(filename,tokenizer,first_n=None):
     return(seq)
 
 class WikiDataset(Dataset):
-    def __init__(self, opt, data, overlapping=True, seed=0):
+    def __init__(self, opt, data, overlapping=True):
         super().__init__()
         self.opt = opt
         self.data = data
         self.overlapping = overlapping
-        self.seed = seed
-        if self.seed is not None:
-            self.shuffle_data()
-
-    def shuffle_data(self):
-        rng = torch.Generator()
-        rng.manual_seed(self.seed)
-        indices = torch.randperm(len(self.data), generator=rng)
-        self.data = [self.data[i] for i in indices]
-
+        
+   
     def __getitem__(self, idx):
         if self.overlapping:
             return torch.tensor(self.data[idx:idx+self.opt.seqlen]), \
