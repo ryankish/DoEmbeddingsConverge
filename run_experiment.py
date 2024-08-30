@@ -14,6 +14,8 @@ import os
 import shutil
 import sys
 from tqdm import tqdm
+import importlib
+from box import Box
 
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -25,6 +27,7 @@ from data_utils import read_corpus, WikiDataset, create_masks
 from init_models import init_models
 from utils.color_print import green, red, cyan, orange
 from utils.options import Options
+from configs import load_experiment_config
 
 # Disable tokenizers parallelism
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -242,16 +245,16 @@ def experiment(args_dict):
 
     tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
     opt.vocab_size = tokenizer.vocab_size # 50,257 from GPT2
-    opt.train = read_corpus('data/wiki2.train.txt',tokenizer, first_n=opt.train_subset)
-    opt.valid = read_corpus('data/wiki2.valid.txt',tokenizer)
-    opt.test = read_corpus('data/wiki2.test.txt',tokenizer)
+    train_text = read_corpus('data/wiki2.train.txt',tokenizer, first_n=opt.train_subset)
+    valid_text = read_corpus('data/wiki2.valid.txt',tokenizer)
+    test_text = read_corpus('data/wiki2.test.txt',tokenizer)
 
-    wiki_train = WikiDataset(opt, opt.train, overlapping=False)
-    wiki_train_loader = DataLoader(wiki_train, batch_size=opt.batchsize, shuffle=True, drop_last=True, num_workers=2)
-    wiki_valid = WikiDataset(opt, opt.valid, overlapping=False)
-    wiki_valid_loader = DataLoader(wiki_valid, batch_size=opt.batchsize, shuffle=False, drop_last=True, num_workers=2)
-    wiki_test = WikiDataset(opt, opt.test, overlapping=False)
-    wiki_test_loader = DataLoader(wiki_test, batch_size=opt.batchsize, shuffle=False, drop_last=True, num_workers=2)
+    wiki_train = WikiDataset(opt, train_text, overlapping=False)
+    wiki_train_loader = DataLoader(wiki_train, batch_size=opt.batch_size, seed=opt.dataset_seed, shuffle=True, drop_last=True, num_workers=2)
+    wiki_valid = WikiDataset(opt, valid_text, overlapping=False)
+    wiki_valid_loader = DataLoader(wiki_valid, batch_size=opt.batch_size, seed=opt.dataset_seed, shuffle=False, drop_last=True, num_workers=2)
+    wiki_test = WikiDataset(opt, test_test, overlapping=False)
+    wiki_test_loader = DataLoader(wiki_test, batch_size=opt.batch_size, seed=opt.dataset_seed, shuffle=False, drop_last=True, num_workers=2)
     opt.train_loader = wiki_train_loader
     opt.valid_loader = wiki_valid_loader
     opt.test_loader = wiki_test_loader
@@ -285,9 +288,6 @@ def experiment(args_dict):
     opt.optimizer2 = torch.optim.Adam(model2.parameters(), lr=opt.lr, betas=(0.9, 0.98), eps=1e-9)
 
 
-    # if opt.SGDR:
-    #     opt.sched = CosineWithRestarts(opt.optimizer, T_max=opt.train_len)
-
     model1 = train_model(model1, opt.optimizer1, opt, model_id=1)
     if opt.experiment_id != 0:
         model2 = train_model(model2, opt.optimizer2, opt, model_id=2)
@@ -295,71 +295,26 @@ def experiment(args_dict):
 
     green(f"Time taken: {time.time() - start_time}")
 
-
-
 def main():
+
+    if len(sys.argv) < 2:
+        raise ValueError("specify config name")
+    experiment0_config = load_experiment_config("exp0")
+    print(experiment0_config.experiment_core.experiment_id)
+    print(experiment0_config.model.d_model)
+
+    # config_name = sys.argv[1]
+    # opt = Box(flatten_config(config_name))
+    # print(flat_config.n_layers)  # This will print 6 
+    #
     create_folder_if_not_exists('experiments')
-
-    experiment_id = 2
-    experiment2_embedding_size = 128
-    model1_embed_init = 'glorot_uniform'
-    model2_embed_init = 'glorot_uniform'
-
-    args_dict = {
-        'experiment_id': experiment_id,
-        'seed': 0,
-        'device': 0,
-        'no_cuda': False,
-        'SGDR': False,
-        'epochs': 2, # TODO: plot freezes
-        'model1_embed_init': model1_embed_init,
-        'model2_embed_init': model2_embed_init,
-        'd_model': experiment2_embedding_size,
-        'n_layers': 6,
-        'heads': 8,
-        'dropout': 0.1,
-        'batchsize': 3,
-        'printevery': 1, # TODO: implement
-        'lr': 0.00001,
-        'seqlen': 512,
-        'threshold': 3,
-        'norm': 2.0,
-        'verbose': False,
-        'time_name': None,
-        'train_subset': None, # for testing purposes only
-        'train': None,
-        'valid': None,
-        'test': None,
-        'optimizer': None,
-        'sched': None,
-        'plot_title': None,
-        'lock_weights': True,
-        'starter_model_path': 'experiments/1/models/1/checkpoint_40.pt',
-    }
-
-    log_filename = f'experiments/{experiment_id}/experiment_{experiment_id}.log'
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s'
-    )
-    file_handler = logging.FileHandler(log_filename)
-    logging.getLogger().addHandler(file_handler)
-
-
-    logging.info('Experiment arguments: %s', json.dumps(args_dict, indent=4))
-    
-    experiment(args_dict)
-
-if __name__ == '__main__':
-
-    main()
 
     # Experiment 0
     # experiment_id = 0
     # experiment0_embedding_size = 512
     # model1_embed_init = 'glorot_uniform'
     # model2_embed_init = 'glorot_uniform'
-
+    #
     # args0_dict = {
     #     'experiment_id': experiment_id,
     #     'seed': 0,
@@ -372,7 +327,7 @@ if __name__ == '__main__':
     #     'n_layers': 6,
     #     'heads': 8,
     #     'dropout': 0.1,
-    #     'batchsize': 3,
+    #     'batch_size': 3,
     #     'printevery': 100,
     #     'lr': 0.00001,
     #     'seqlen': 512,
@@ -389,9 +344,63 @@ if __name__ == '__main__':
     #     'sched': None,
     #     'plot_title': 'Baseline Model Perplexity',
     # }
-    
+    #
     # experiment(args0_dict)
+    #
+    #
+    # experiment_id = 2
+    # experiment2_embedding_size = 128
+    # model1_embed_init = 'glorot_uniform'
+    # model2_embed_init = 'glorot_uniform'
+    #
+    # args_dict = {
+    #     'experiment_id': experiment_id,
+    #     'dataset_seed': 0,
+    #     'device': "cuda:0",
+    #     'no_cuda': False,
+    #     'SGDR': False,
+    #     'epochs': 2, # TODO: plot freezes
+    #     'model1_embed_init': model1_embed_init,
+    #     'model2_embed_init': model2_embed_init,
+    #     'd_model': experiment2_embedding_size,
+    #     'n_layers': 6,
+    #     'heads': 8,
+    #     'dropout': 0.1,
+    #     'batch_size': 3,
+    #     'printevery': 1, # TODO: implement
+    #     'lr': 0.00001,
+    #     'seqlen': 512,
+    #     'threshold': 3,
+    #     'norm': 2.0,
+    #     'verbose': False,
+    #     'time_name': None,
+    #     'train_subset': None, # for testing purposes only
+    #     'train': None,
+    #     'valid': None,
+    #     'test': None,
+    #     'optimizer': None,
+    #     'sched': None,
+    #     'plot_title': None,
+    #     'lock_weights': True,
+    #     'starter_model_path': 'experiments/1/models/1/checkpoint_40.pt',
+    # }
+    #
+    # log_filename = f'experiments/{experiment_id}/experiment_{experiment_id}.log'
+    # logging.basicConfig(
+    #     level=logging.INFO,
+    #     format='%(asctime)s - %(levelname)s - %(message)s'
+    # )
+    # file_handler = logging.FileHandler(log_filename)
+    # logging.getLogger().addHandler(file_handler)
+    #
+    #
+    # logging.info('Experiment arguments: %s', json.dumps(args_dict, indent=4))
+    #
+    # experiment(args_dict)
+    #
+if __name__ == '__main__':
 
+    main()
     # Experiment 1
     # experiment_id = 1
     # experiment1_embedding_size = 128
@@ -410,7 +419,7 @@ if __name__ == '__main__':
     #     'n_layers': 6,
     #     'heads': 8,
     #     'dropout': 0.1,
-    #     'batchsize': 3,
+    #     'batch_size': 3,
     #     'printevery': 100,
     #     'lr': 0.00001,
     #     'seqlen': 512,

@@ -1,8 +1,8 @@
 from box import Box
 
-experiment1 = {
+experiment_config = Box({
         'experiment_core': {
-                'experiment_id': 1,
+                'experiment_id': 0,
                 'model1_embed_init': 'glorot_uniform',
                 'model2_embed_init': 'glorot_uniform',
                 'start_model_path': None,
@@ -43,18 +43,18 @@ experiment1 = {
             'test': None,
             'optimizer': None,
         }
-    }
-config = Box(experiment1)
-#
-# experiment2 = {
-#         'experiment_id': experiment_id,
+    })
+
+
+
+#         'experiment_id': 1,
 #         'dataset_seed': 0,
 #         'device': "cuda:0",
 #         'no_cuda': False,
 #         'SGDR': False,
 #         'epochs': 2,
-#         'model1_embed_init': model1_embed_init,
-#         'model2_embed_init': model2_embed_init,
+#         'model1_embed_init': 'glorot_uniform',
+#         'model2_embed_init': 'glorot_uniform',
 #         'd_model': experiment2_embedding_size,
 #         'n_layers': 6,
 #         'heads': 8,

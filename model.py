@@ -158,7 +158,6 @@ class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler):
                  eta_min: float = 0.,
                  last_epoch: int = -1,
                  factor: float = 1.) -> None:
-        # pylint: disable=invalid-name
         self.T_max = T_max
         self.eta_min = eta_min
         self.factor = factor
@@ -203,26 +202,6 @@ class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler):
 
         return lrs
 
-# Removed
-# class EncoderLayer(nn.Module):
-#     def __init__(self, d_model, heads, dropout=0.1):
-#         super().__init__()
-#         self.norm_1 = Norm(d_model)
-#         self.norm_2 = Norm(d_model)
-#         self.attn = MultiHeadAttention(heads, d_model, dropout=dropout)
-#         self.ff = FeedForward(d_model, dropout=dropout)
-#         self.dropout_1 = nn.Dropout(dropout)
-#         self.dropout_2 = nn.Dropout(dropout)
-
-#     def forward(self, x, mask):
-#         x2 = self.norm_1(x)
-#         x = x + self.dropout_1(self.attn(x2,x2,x2,mask))
-#         x2 = self.norm_2(x)
-#         x = x + self.dropout_2(self.ff(x2))
-#         return x
-
-# build a decoder layer with two multi-head attention layers and
-# one feed-forward layer
 class DecoderLayer(nn.Module):
     def __init__(self, d_model, heads, dropout=0.1, ff_shortcut=True):
         super().__init__()
@@ -230,24 +209,16 @@ class DecoderLayer(nn.Module):
         self.ff_shortcut = ff_shortcut
         self.norm_1 = Norm(d_model)
         self.norm_2 = Norm(d_model)
-        # self.norm_3 = Norm(d_model) # Removed
 
         self.dropout_1 = nn.Dropout(dropout)
         self.dropout_2 = nn.Dropout(dropout)
-        # self.dropout_3 = nn.Dropout(dropout) # Removed
 
         self.attn_1 = MultiHeadAttention(heads, d_model, dropout=dropout)
-        # self.attn_2 = MultiHeadAttention(heads, d_model, dropout=dropout) # Removed
         self.ff = FeedForward(d_model, dropout=dropout)
 
-    #def forward(self, x, e_outputs, src_mask, trg_mask): # Replaced
     def forward(self, x, trg_mask):
         x2 = self.norm_1(x)
         x = x + self.dropout_1(self.attn_1(x2, x2, x2, trg_mask))
-        # Removed
-        # x2 = self.norm_2(x)
-        # x = x + self.dropout_2(self.attn_2(x2, e_outputs, e_outputs, \
-        # src_mask))
         x2 = self.norm_2(x) # Changed to norm_2
         if self.ff_shortcut:
             x = x + self.dropout_2(self.ff(x2)) # Changed to dropout_2
@@ -255,21 +226,6 @@ class DecoderLayer(nn.Module):
             x = self.dropout_2(self.ff(x2))
         return x
 
-# Removed
-# class Encoder(nn.Module):
-#     def __init__(self, vocab_size, d_model, N, heads, dropout):
-#         super().__init__()
-#         self.N = N
-#         self.embed = Embedder(vocab_size, d_model)
-#         self.pe = PositionalEncoder(d_model, dropout=dropout)
-#         self.layers = get_clones(EncoderLayer(d_model, heads, dropout), N)
-#         self.norm = Norm(d_model)
-#     def forward(self, src, mask):
-#         x = self.embed(src)
-#         x = self.pe(x)
-#         for i in range(self.N):
-#             x = self.layers[i](x, mask)
-#         return self.norm(x)
 
 class Decoder(nn.Module):
     def __init__(self, vocab_size, d_model, N, heads, dropout):
@@ -279,28 +235,21 @@ class Decoder(nn.Module):
         self.pe = PositionalEncoder(d_model, dropout=dropout)
         self.layers = get_clones(DecoderLayer(d_model, heads, dropout), N)
         self.norm = Norm(d_model)
-    # def forward(self, trg, e_outputs, src_mask, trg_mask): # Replaced
+
     def forward(self, trg, trg_mask):
         x = self.embed(trg)
         x = self.pe(x)
         for i in range(self.N):
-            # x = self.layers[i](x, e_outputs, src_mask, trg_mask) # Replaced
             x = self.layers[i](x, trg_mask)
         return self.norm(x)
 
 class Transformer(nn.Module):
-    # def __init__(self, src_vocab, trg_vocab, d_model, N, heads, dropout): # Replaced
     def __init__(self, trg_vocab, d_model, N, heads, dropout):
         super().__init__()
-        # self.encoder = Encoder(src_vocab, d_model, N, heads, dropout) # Removed
         self.decoder = Decoder(trg_vocab, d_model, N, heads, dropout)
         self.out = nn.Linear(d_model, trg_vocab)
 
-    # def forward(self, src, trg, src_mask, trg_mask): # Replaced
     def forward(self, trg, trg_mask):
-        # e_outputs = self.encoder(src, src_mask) # Removed
-        #print("DECODER")
-        # d_output = self.decoder(trg, e_outputs, src_mask, trg_mask) # Replaced
         d_output = self.decoder(trg, trg_mask)
         output = self.out(d_output)
         return output
