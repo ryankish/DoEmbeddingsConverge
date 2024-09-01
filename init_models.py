@@ -1,45 +1,60 @@
+import copy
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import numpy as np
-import copy
 
-from model import Transformer
 import ds_utils
+from model import Transformer
+
 
 def load_model(model, model_id, opt):
-    path = f"experiment/{opt.experiment_id}/models/{model_id}/checkpoint.pt"
+    path = f"experiment/{opt.core.experiment_id}/models/{model_id}/checkpoint.pt"
     model.load_state_dict(torch.load(path))
 
+
 def init_embedding_weights_with_seed(model, strategy, seed):
-    if strategy not in ['glorot_normal', 'glorot_uniform', 'kaiming_normal','kaiming_uniform']:
-        raise ValueError(f"Invalid strategy '{strategy}'. Please choose either 'gaussian' or 'glorot'.")
+    if strategy not in [
+        "glorot_normal",
+        "glorot_uniform",
+        "kaiming_normal",
+        "kaiming_uniform",
+    ]:
+        raise ValueError(
+            f"Invalid strategy '{strategy}'. Please choose either 'gaussian' or 'glorot'."
+        )
 
     torch.manual_seed(seed)
-    if strategy=='glorot_normal':
+    if strategy == "glorot_normal":
         with torch.no_grad():
             nn.init.xavier_normal_(model.decoder.embed.embed.weight)
-    elif strategy=='glorot_uniform':
+    elif strategy == "glorot_uniform":
         with torch.no_grad():
             nn.init.xavier_uniform_(model.decoder.embed.embed.weight)
-    elif strategy=='kaiming_normal':
+    elif strategy == "kaiming_normal":
         with torch.no_grad():
             nn.init.kaiming_normal_(model.decoder.embed.embed.weight)
-    elif strategy=='kaiming_uniform':
+    elif strategy == "kaiming_uniform":
         with torch.no_grad():
             nn.init.kaiming_normal_(model.decoder.embed.embed.weight)
+
 
 def get_base_model(opt, model_id=None):
 
-    assert opt.d_model % opt.heads == 0
-    assert opt.dropout < 1
+    assert opt.model.d_model % opt.model.heads == 0
+    assert opt.training1.dropout < 1
 
-    torch.manual_seed(opt.seed)
+    torch.manual_seed(opt.core.init_seed)
 
     model = Transformer(
-        opt.vocab_size, opt.d_model, opt.n_layers, opt.heads, opt.dropout)
-    model.to(opt.device)
+        opt.vocab_size,
+        opt.model.d_model,
+        opt.model.n_layers,
+        opt.model.heads,
+        opt.training1.dropout,
+    )
+    model.to(opt.device.device)
     model.eval()
 
     for p in model.parameters():
@@ -48,19 +63,22 @@ def get_base_model(opt, model_id=None):
 
     return model
 
+
 def init_models(opt):
     model1 = get_base_model(opt)
     model2 = copy.deepcopy(model1)
     original_embed_weights = copy.deepcopy(model1.decoder.embed.embed.weight)
 
     with torch.no_grad():
-        mse = ds_utils.mse(model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight)
+        mse = ds_utils.mse(
+            model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight
+        )
         assert mse == 0.0
 
-        init_embedding_weights_with_seed(model1, opt.model1_embed_init, seed=1)
-        init_embedding_weights_with_seed(model2, opt.model2_embed_init, seed=2)
+        init_embedding_weights_with_seed(model1, opt.core.model1_embed_init, seed=1)
+        init_embedding_weights_with_seed(model2, opt.core.model2_embed_init, seed=2)
 
         mse = ds_utils.mse(model1.decoder.embed.embed.weight, original_embed_weights)
-        print('MSE between original embedding and model 1 embedding', mse)
+        print("MSE between original embedding and model 1 embedding", mse)
 
     return model1, model2
