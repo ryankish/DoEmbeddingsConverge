@@ -18,6 +18,8 @@ from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
 from transformers import GPT2TokenizerFast
 
+import model
+
 # from utils.options import Options
 from configs import load_experiment_config
 from data_utils import WikiDataset, create_masks, read_corpus
@@ -81,9 +83,8 @@ def load_model(model, checkpoint_path):
 
 
 def save_checkpoint(model, optimizer, epoch, model_id, opt):
-    path = (
-        f"experiments/{opt.core.experiment_id}/models/{model_id}/checkpoint_{epoch}.pt"
-    )
+    path = f"experiments/{opt.core.experiment_id}/models/{model_id}/checkpoints/checkpoint_{epoch}.pt"
+    os.makedirs(os.path.dirname(path))
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -243,61 +244,19 @@ def freeze_weights(model):
     model.decoder.embed.embed.weight.requires_grad = True
 
 
-# def dataloader_testing(opt):
-#
-#     # run 1
-#     for epoch in range(1, 3):
-#         for input_ids, targets in tqdm(opt.train_loader):
-#             # save the input_ids to a file to compare with run 2 later
-#
-#     # run 2
-#     for epoch in range(1, 3):
-#         for input_ids, targets in tqdm(opt.train_loader):
-#             # save the input_ids to a file to compare with run 2 later
-#
-# def compare_input_ids_between_runs(input_ids_run1_path, input_ids_run2_path):
-#     return
-#
-def compare_input_ids_between_runs(input_ids_run1_path, input_ids_run2_path):
-    with open(input_ids_run1_path, "r") as f1, open(input_ids_run2_path, "r") as f2:
-        lines1 = f1.readlines()
-        lines2 = f2.readlines()
-
-    if len(lines1) != len(lines2):
-        print("Error: Files have different number of lines.")
-        return
-
-    for i, (line1, line2) in enumerate(zip(lines1, lines2)):
-        if line1 != line2:
-            print(f"Mismatch at line {i+1}:")
-            print(f"Run 1: {line1.strip()}")
-            print(f"Run 2: {line2.strip()}")
-            return
-
-    print("All input IDs are identical between the two runs.")
-
-
 def dataloader_testing(opt):
-    input_ids_run1_path = f"experiments/{opt.core.experiment_id}/input_ids_run1.txt"
-    input_ids_run2_path = f"experiments/{opt.core.experiment_id}/input_ids_run2.txt"
-
-    # run 1
+    input_ids_run_path = (
+        f"experiments/{opt.core.experiment_id}/models/{opt.model_id}/data/input_ids.txt"
+    )
+    create_folder_if_not_exists(os.path.dirname(input_ids_run_path))
     seed_all(42)
-    with open(input_ids_run1_path, "w") as f:
+    with open(input_ids_run_path, "w") as f:
         for epoch in range(1, 3):
-            for batch_idx, (input_ids, targets) in enumerate(tqdm(opt.train_loader1)):
+            for batch_idx, (input_ids, targets) in enumerate(tqdm(opt.train_loader)):
                 f.write(f"Epoch {epoch}, Batch {batch_idx}:\n")
                 f.write(" ".join(map(str, input_ids.tolist())) + "\n\n")
 
-    # run 2
-    seed_all(42)
-    with open(input_ids_run2_path, "w") as f:
-        for epoch in range(1, 3):
-            for batch_idx, (input_ids, targets) in enumerate(tqdm(opt.train_loader2)):
-                f.write(f"Epoch {epoch}, Batch {batch_idx}:\n")
-                f.write(" ".join(map(str, input_ids.tolist())) + "\n\n")
-
-    return input_ids_run1_path, input_ids_run2_path
+    return input_ids_run_path
 
 
 # Source: https://discuss.pytorch.org/t/reproducibility-with-all-the-bells-and-whistles/81097/7
@@ -318,34 +277,34 @@ def experiment(opt):
     else:
         opt.torch_device = torch.device("cpu")
 
-    directory = f"experiments/{opt.core.experiment_id}"
-    if os.path.exists(directory):
-        logging.info(f"Experiment {opt.core.experiment_id} already exists")
+    exp_dir = f"experiments/{opt.core.experiment_id}"
+    model_dir = os.path.join(exp_dir, "models", str(opt.model_id))
+    if os.path.exists(model_dir):
+        logging.info(
+            f"Experiment {opt.core.experiment_id} model {opt.model_id} already exists"
+        )
         logging.info("Do you wish to overwrite?")
         logging.info("y/n")
         response = input("Do you wish to overwrite? (y/n): ")
         if response.lower() == "y":
             logging.info("Overwriting")
-            clear_directory(directory)
+            clear_directory(model_dir)
         else:
             logging.info("Exiting")
             sys.exit()
     else:
-        os.makedirs(directory)
-        logging.info(f"Experiment directory created ({directory})")
+        os.makedirs(model_dir)
+        os.makedirs(os.path.join(model_dir, "embeddings"))
+        logging.info(f"Experiment directory created ({model_dir})")
 
-    model1_dir = f"experiments/{opt.core.experiment_id}/models/1/embeddings"
-    if not os.path.exists(model1_dir):
-        os.makedirs(model1_dir)
-
-    model2_dir = f"experiments/{opt.core.experiment_id}/models/2/embeddings"
-    if not os.path.exists(model2_dir):
-        os.makedirs(model2_dir)
-
-    exp_str = f"=" * 10 + f" Running Experiment {opt.core.experiment_id} " + "=" * 10
+    exp_str = (
+        "=" * 10
+        + f" Running Experiment {opt.core.experiment_id} Model {opt.model_id} "
+        + "=" * 10
+    )
     border = "=" * len(exp_str)
     green(border)
-    green(f"=" * 10 + f" Running Experiment {opt.core.experiment_id} " + "=" * 10)
+    green(exp_str)
     green(border)
 
     start_time = time.time()
@@ -358,21 +317,9 @@ def experiment(opt):
     valid_text = read_corpus("data/wiki2.valid.txt", tokenizer)
     test_text = read_corpus("data/wiki2.test.txt", tokenizer)
     g = torch.Generator()
-    wiki_train = WikiDataset(opt.model.seqlen, train_text, overlapping=False)
+    wiki_train = WikiDataset(opt.model.seqlen, train_text, overlapping=True)
     g.manual_seed(0)
-    print("make wiki_train_loader1")
-    wiki_train_loader1 = DataLoader(
-        wiki_train,
-        batch_size=opt.training1.batch_size,
-        shuffle=True,
-        drop_last=True,
-        num_workers=0,
-        worker_init_fn=seed_worker,
-        generator=g,
-    )
-    g.manual_seed(0)
-    print("make wiki_train_loader2")
-    wiki_train_loader2 = DataLoader(
+    wiki_train_loader = DataLoader(
         wiki_train,
         batch_size=opt.training1.batch_size,
         shuffle=True,
@@ -382,15 +329,8 @@ def experiment(opt):
         generator=g,
     )
 
-    wiki_valid = WikiDataset(opt.model.seqlen, valid_text, overlapping=False)
-    wiki_valid_loader1 = DataLoader(
-        wiki_valid,
-        batch_size=opt.training1.batch_size,
-        shuffle=False,
-        drop_last=True,
-        num_workers=0,
-    )
-    wiki_valid_loader2 = DataLoader(
+    wiki_valid = WikiDataset(opt.model.seqlen, valid_text, overlapping=True)
+    wiki_valid_loader = DataLoader(
         wiki_valid,
         batch_size=opt.training1.batch_size,
         shuffle=False,
@@ -398,15 +338,8 @@ def experiment(opt):
         num_workers=0,
     )
 
-    wiki_test = WikiDataset(opt.model.seqlen, test_text, overlapping=False)
-    wiki_test_loader1 = DataLoader(
-        wiki_test,
-        batch_size=opt.training1.batch_size,
-        shuffle=False,
-        drop_last=True,
-        num_workers=0,
-    )
-    wiki_test_loader2 = DataLoader(
+    wiki_test = WikiDataset(opt.model.seqlen, test_text, overlapping=True)
+    wiki_test_loader = DataLoader(
         wiki_test,
         batch_size=opt.training1.batch_size,
         shuffle=False,
@@ -414,53 +347,55 @@ def experiment(opt):
         num_workers=0,
     )
 
-    opt.train_loader1 = wiki_train_loader1
-    opt.train_loader2 = wiki_train_loader2
+    opt.train_loader = wiki_train_loader
 
-    opt.valid_loader1 = wiki_valid_loader1
-    opt.valid_loader2 = wiki_valid_loader2
+    opt.valid_loader = wiki_valid_loader
 
-    opt.test_loader1 = wiki_test_loader1
-    opt.test_loader2 = wiki_test_loader2
+    opt.test_loader = wiki_test_loader
 
-    model1, model2 = init_models(opt)
+    model = init_models(opt)
+    opt.optimizer = torch.optim.Adam(
+        model.parameters(), lr=opt.training1.lr, betas=(0.9, 0.98), eps=1e-9
+    )
+
+    save_checkpoint(
+        model=model, optimizer=opt.optimizer, epoch=0, model_id=opt.model_id, opt=opt
+    )
     if opt.core.lock_weights and opt.core.starter_model_path:
-        load_model(model1, opt.core.starter_model_path)
-        load_model(model2, opt.core.starter_model_path)
-        freeze_weights(model1)
-        freeze_weights(model2)
-        mse = calculate_mse_torch(
-            model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight
-        )
-        assert mse == 0.0
+        load_model(model, opt.core.starter_model_path)
+        # load_model(model2, opt.core.starter_model_path)
+        freeze_weights(model)
+        # freeze_weights(model2)
+        # mse = calculate_mse_torch(
+        #     model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight
+        # )
+        # assert mse == 0.0
         # TODO: make it so it can handle other init strategies in init_models.py
-        torch.manual_seed(1)
-        with torch.no_grad():
-            nn.init.xavier_normal_(model1.decoder.embed.embed.weight)
-        torch.manual_seed(2)
-        with torch.no_grad():
-            nn.init.xavier_normal_(model2.decoder.embed.embed.weight)
-        mse = calculate_mse_torch(
-            model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight
-        )
-        logging.info(f"initial mse from preloaded and reinit: {mse}")
+        # torch.manual_seed(1)
+        # with torch.no_grad():
+        #     nn.init.xavier_normal_(model1.decoder.embed.embed.weight)
+        # torch.manual_seed(2)
+        # with torch.no_grad():
+        #     nn.init.xavier_normal_(model2.decoder.embed.embed.weight)
+        # mse = calculate_mse_torch(
+        #     model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight
+        # )
+        # logging.info(f"initial mse from preloaded and reinit: {mse}")
 
     # count parameters
-    model_parameters = filter(lambda p: p.requires_grad, model1.parameters())
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
     params = sum([np.prod(p.size()) for p in model_parameters])
     red(f"total params: {params}")
     logging.info(f"total params: {params}")
 
-    opt.optimizer1 = torch.optim.Adam(
-        model1.parameters(), lr=opt.training1.lr, betas=(0.9, 0.98), eps=1e-9
-    )
-    opt.optimizer2 = torch.optim.Adam(
-        model2.parameters(), lr=opt.training1.lr, betas=(0.9, 0.98), eps=1e-9
-    )
+    # opt.optimizer2 = torch.optim.Adam(
+    #     model2.parameters(), lr=opt.training1.lr, betas=(0.9, 0.98), eps=1e-9
+    # )
+    if opt.run.test_dataloader:
+        dataloader_testing(opt)
+    else:  # traing
+        model = train_model(model, opt.optimizer, opt, model_id=opt.model_id)
 
-    input_ids_run1_path, input_ids_run2_path = dataloader_testing(opt)
-
-    compare_input_ids_between_runs(input_ids_run1_path, input_ids_run2_path)
     #
     # model1 = train_model(model1, opt.optimizer1, opt, model_id=1)
     # if opt.core.experiment_id != 0:
@@ -475,152 +410,17 @@ def main():
     if len(sys.argv) < 2:
         raise ValueError("specify config name")
     experiment_num = sys.argv[1]
+    model_id = int(sys.argv[2])
 
     opt = load_experiment_config(f"exp{experiment_num}")
+    opt.model_id = model_id
     print(opt.core.experiment_id)
     print(opt.model.d_model)
 
     create_folder_if_not_exists("experiments")
     experiment(opt)
 
-    # Experiment 0
-    # experiment_id = 0
-    # experiment0_embedding_size = 512
-    # model1_embed_init = 'glorot_uniform'
-    # model2_embed_init = 'glorot_uniform'
-    #
-    # args0_dict = {
-    #     'experiment_id': experiment_id,
-    #     'seed': 0,
-    #     'no_cuda': False,
-    #     'SGDR': False,
-    #     'epochs': 40,
-    #     'model1_embed_init': model1_embed_init,
-    #     'model2_embed_init': model2_embed_init,
-    #     'd_model': experiment0_embedding_size,
-    #     'n_layers': 6,
-    #     'heads': 8,
-    #     'dropout': 0.1,
-    #     'batch_size': 3,
-    #     'printevery': 100,
-    #     'lr': 0.00001,
-    #     'seqlen': 512,
-    #     'threshold': 3,
-    #     'norm': 2.0,
-    #     'verbose': False,
-    #     'device': 0,
-    #     'time_name': None,
-    #     'train_subset': None, # for testing purposes only
-    #     'train': None,
-    #     'valid': None,
-    #     'test': None,
-    #     'optimizer': None,
-    #     'sched': None,
-    #     'plot_title': 'Baseline Model Perplexity',
-    # }
-    #
-    # experiment(args0_dict)
-    #
-    #
-    # experiment_id = 2
-    # experiment2_embedding_size = 128
-    # model1_embed_init = 'glorot_uniform'
-    # model2_embed_init = 'glorot_uniform'
-    #
-    # args_dict = {
-    #     'experiment_id': experiment_id,
-    #     'dataset_seed': 0,
-    #     'device': "cuda:0",
-    #     'no_cuda': False,
-    #     'SGDR': False,
-    #     'epochs': 2, # TODO: plot freezes
-    #     'model1_embed_init': model1_embed_init,
-    #     'model2_embed_init': model2_embed_init,
-    #     'd_model': experiment2_embedding_size,
-    #     'n_layers': 6,
-    #     'heads': 8,
-    #     'dropout': 0.1,
-    #     'batch_size': 3,
-    #     'printevery': 1, # TODO: implement
-    #     'lr': 0.00001,
-    #     'seqlen': 512,
-    #     'threshold': 3,
-    #     'norm': 2.0,
-    #     'verbose': False,
-    #     'time_name': None,
-    #     'train_subset': None, # for testing purposes only
-    #     'train': None,
-    #     'valid': None,
-    #     'test': None,
-    #     'optimizer': None,
-    #     'sched': None,
-    #     'plot_title': None,
-    #     'lock_weights': True,
-    #     'starter_model_path': 'experiments/1/models/1/checkpoint_40.pt',
-    # }
-    #
-    # log_filename = f'experiments/{experiment_id}/experiment_{experiment_id}.log'
-    # logging.basicConfig(
-    #     level=logging.INFO,
-    #     format='%(asctime)s - %(levelname)s - %(message)s'
-    # )
-    # file_handler = logging.FileHandler(log_filename)
-    # logging.getLogger().addHandler(file_handler)
-    #
-    #
-    # logging.info('Experiment arguments: %s', json.dumps(args_dict, indent=4))
-    #
-    # experiment(args_dict)
-    #
-
 
 if __name__ == "__main__":
 
     main()
-    # Experiment 1
-    # experiment_id = 1
-    # experiment1_embedding_size = 128
-    # model1_embed_init = 'glorot_uniform'
-    # model2_embed_init = 'glorot_uniform'
-
-    # args1_dict = {
-    #     'experiment_id': experiment_id,
-    #     'seed': 0,
-    #     'no_cuda': False,
-    #     'SGDR': False,
-    #     'epochs': 40,
-    #     'model1_embed_init': model1_embed_init,
-    #     'model2_embed_init': model2_embed_init,
-    #     'd_model': experiment1_embedding_size,
-    #     'n_layers': 6,
-    #     'heads': 8,
-    #     'dropout': 0.1,
-    #     'batch_size': 3,
-    #     'printevery': 100,
-    #     'lr': 0.00001,
-    #     'seqlen': 512,
-    #     'threshold': 3,
-    #     'norm': 2.0,
-    #     'verbose': False,
-    #     'device': 0,
-    #     'time_name': None,
-    #     'train_subset': None, # for testing purposes only
-    #     'train': None,
-    #     'valid': None,
-    #     'test': None,
-    #     'optimizer': None,
-    #     'sched': None,
-    #     'plot_title': None,
-    # }
-
-    # experiment(args1_dict)
-
-    # =========== to recreate the perplexity plot
-    # model_id = 1
-    # opt = Options()
-    # opt.make_vars(args1_dict)
-    # exp_perplexities_model = pd.read_csv(f'experiments/{opt.experiment_id}/models/{model_id}/perplexities.csv')
-    # train_perplexities, valid_perplexities = exp_perplexities_model['train_perplexities'].values, exp_perplexities_model['valid_perplexities'].values
-    # plot_perplexity(train_perplexities, valid_perplexities, model_id, opt)
-
-    # Experiment 2

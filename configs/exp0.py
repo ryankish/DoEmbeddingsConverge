@@ -4,14 +4,20 @@ experiment_config = Box(
     {
         "core": {
             "experiment_id": 0,
-            "init_seed": 0,
+            "base_init_seed": 0,
+            "model1_embed_init_seed": 1,
+            "model2_embed_init_seed": 2,
             "model1_embed_init": "glorot_uniform",
             "model2_embed_init": "glorot_uniform",
             "start_model_path": None,
             "lock_weights": False,
             "plot_title": "Baseline Model Perplexity",
         },
+        "run": {
+            "test_dataset": True,
+        },
         "model": {
+            "vocab_size": 50257,
             "d_model": 128,
             "n_layers": 6,
             "heads": 8,

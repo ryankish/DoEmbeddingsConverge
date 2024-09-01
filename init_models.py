@@ -5,7 +5,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 
-import ds_utils
 from model import Transformer
 
 
@@ -40,12 +39,12 @@ def init_embedding_weights_with_seed(model, strategy, seed):
             nn.init.kaiming_normal_(model.decoder.embed.embed.weight)
 
 
-def get_base_model(opt, model_id=None):
+def get_base_model(opt):
 
     assert opt.model.d_model % opt.model.heads == 0
     assert opt.training1.dropout < 1
 
-    torch.manual_seed(opt.core.init_seed)
+    torch.manual_seed(opt.core.base_init_seed)
 
     model = Transformer(
         opt.vocab_size,
@@ -65,20 +64,16 @@ def get_base_model(opt, model_id=None):
 
 
 def init_models(opt):
-    model1 = get_base_model(opt)
-    model2 = copy.deepcopy(model1)
-    original_embed_weights = copy.deepcopy(model1.decoder.embed.embed.weight)
+    model = get_base_model(opt)
+    embed_init_seed = None
+    embed_init_strategy = None
+    if opt.model_id == 1:
+        embed_init_strategy = opt.core.model1_embed_init
+        embed_init_seed = opt.core.model1_embed_init_seed
+    elif opt.model_id == 2:
+        embed_init_strategy = opt.core.model2_embed_init
+        embed_init_seed = opt.core.model2_embed_init_seed
 
-    with torch.no_grad():
-        mse = ds_utils.mse(
-            model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight
-        )
-        assert mse == 0.0
+    init_embedding_weights_with_seed(model, embed_init_strategy, seed=embed_init_seed)
 
-        init_embedding_weights_with_seed(model1, opt.core.model1_embed_init, seed=1)
-        init_embedding_weights_with_seed(model2, opt.core.model2_embed_init, seed=2)
-
-        mse = ds_utils.mse(model1.decoder.embed.embed.weight, original_embed_weights)
-        print("MSE between original embedding and model 1 embedding", mse)
-
-    return model1, model2
+    return model

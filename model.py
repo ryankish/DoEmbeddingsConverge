@@ -1,23 +1,25 @@
 import copy
 import math
+
 import numpy as np
-
-
 import torch
-import torch.nn.functional as F
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.autograd import Variable
+
 
 class Embedder(nn.Module):
     def __init__(self, vocab_size, d_model):
         super().__init__()
         self.d_model = d_model
         self.embed = nn.Embedding(vocab_size, d_model)
+
     def forward(self, x):
         return self.embed(x.int())
 
+
 class PositionalEncoder(nn.Module):
-    def __init__(self, d_model, max_seq_len = 4096, dropout = 0.1):
+    def __init__(self, d_model, max_seq_len=4096, dropout=0.1):
         super().__init__()
         self.d_model = d_model
         self.dropout = nn.Dropout(dropout)
@@ -26,26 +28,25 @@ class PositionalEncoder(nn.Module):
         pe = torch.zeros(max_seq_len, d_model)
         for pos in range(max_seq_len):
             for i in range(0, d_model, 2):
-                pe[pos, i] = \
-                math.sin(pos / (10000 ** ((2 * i)/d_model)))
-                pe[pos, i + 1] = \
-                math.cos(pos / (10000 ** ((2 * (i + 1))/d_model)))
+                pe[pos, i] = math.sin(pos / (10000 ** ((2 * i) / d_model)))
+                pe[pos, i + 1] = math.cos(pos / (10000 ** ((2 * (i + 1)) / d_model)))
         pe = pe.unsqueeze(0)
-        self.register_buffer('pe', pe)
+        self.register_buffer("pe", pe)
 
     def forward(self, x):
         # make embeddings relatively larger
         x = x * math.sqrt(self.d_model)
-        #add constant to embedding
+        # add constant to embedding
         seq_len = x.size(1)
-        pe = Variable(self.pe[:,:seq_len], requires_grad=False)
+        pe = Variable(self.pe[:, :seq_len], requires_grad=False)
         if x.is_cuda:
             pe.cuda()
         x = x + pe
         return self.dropout(x)
 
+
 class Norm(nn.Module):
-    def __init__(self, d_model, eps = 1e-6):
+    def __init__(self, d_model, eps=1e-6):
         super().__init__()
 
         self.size = d_model
@@ -57,14 +58,19 @@ class Norm(nn.Module):
         self.eps = eps
 
     def forward(self, x):
-        norm = self.alpha * (x - x.mean(dim=-1, keepdim=True)) \
-        / (x.std(dim=-1, keepdim=True) + self.eps) + self.bias
+        norm = (
+            self.alpha
+            * (x - x.mean(dim=-1, keepdim=True))
+            / (x.std(dim=-1, keepdim=True) + self.eps)
+            + self.bias
+        )
         return norm
 
+
 def attention(q, k, v, d_k, mask=None, dropout=None):
-    
-    scores = torch.matmul(q, k.transpose(-2, -1)) /  math.sqrt(d_k)
-    
+
+    scores = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(d_k)
+
     if mask is not None:
         mask = mask.unsqueeze(1)
         scores = scores.masked_fill(mask == 0, -1e9)
@@ -77,8 +83,9 @@ def attention(q, k, v, d_k, mask=None, dropout=None):
     output = torch.matmul(scores, v)
     return output
 
+
 class MultiHeadAttention(nn.Module):
-    def __init__(self, heads, d_model, dropout = 0.1, method='dot-product'):
+    def __init__(self, heads, d_model, dropout=0.1, method="dot-product"):
         super().__init__()
 
         self.d_model = d_model
@@ -103,21 +110,21 @@ class MultiHeadAttention(nn.Module):
         v = self.v_linear(v).view(bs, -1, self.h, self.d_k)
 
         # transpose to get dimensions bs * N * sl * d_model
-        k = k.transpose(1,2)
-        q = q.transpose(1,2)
-        v = v.transpose(1,2)
+        k = k.transpose(1, 2)
+        q = q.transpose(1, 2)
+        v = v.transpose(1, 2)
 
         # calculate attention using function we will define next
         scores = attention(q, k, v, self.d_k, mask, self.dropout)
         # concatenate heads and put through final linear layer
-        concat = scores.transpose(1,2).contiguous()\
-        .view(bs, -1, self.d_model)
+        concat = scores.transpose(1, 2).contiguous().view(bs, -1, self.d_model)
         output = self.out(concat)
 
         return output
 
+
 class FeedForward(nn.Module):
-    def __init__(self, d_model, d_ff=2048, dropout = 0.1):
+    def __init__(self, d_model, d_ff=2048, dropout=0.1):
         super().__init__()
 
         # We set d_ff as a default to 2048
@@ -130,8 +137,10 @@ class FeedForward(nn.Module):
         x = self.linear_2(x)
         return x
 
+
 def get_clones(module, N):
     return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+
 
 class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler):
     """
@@ -152,18 +161,20 @@ class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler):
 
     """
 
-    def __init__(self,
-                 optimizer: torch.optim.Optimizer,
-                 T_max: int,
-                 eta_min: float = 0.,
-                 last_epoch: int = -1,
-                 factor: float = 1.) -> None:
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        T_max: int,
+        eta_min: float = 0.0,
+        last_epoch: int = -1,
+        factor: float = 1.0,
+    ) -> None:
         self.T_max = T_max
         self.eta_min = eta_min
         self.factor = factor
         self._last_restart: int = 0
         self._cycle_counter: int = 0
-        self._cycle_factor: float = 1.
+        self._cycle_factor: float = 1.0
         self._updated_cycle_len: int = T_max
         self._initialized: bool = False
         super(CosineWithRestarts, self).__init__(optimizer, last_epoch)
@@ -182,15 +193,18 @@ class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler):
 
         lrs = [
             (
-                self.eta_min + ((lr - self.eta_min) / 2) *
-                (
+                self.eta_min
+                + ((lr - self.eta_min) / 2)
+                * (
                     np.cos(
-                        np.pi *
-                        ((self._cycle_counter) % self._updated_cycle_len) /
-                        self._updated_cycle_len
-                    ) + 1
+                        np.pi
+                        * ((self._cycle_counter) % self._updated_cycle_len)
+                        / self._updated_cycle_len
+                    )
+                    + 1
                 )
-            ) for lr in self.base_lrs
+            )
+            for lr in self.base_lrs
         ]
 
         if self._cycle_counter % self._updated_cycle_len == 0:
@@ -201,6 +215,7 @@ class CosineWithRestarts(torch.optim.lr_scheduler._LRScheduler):
             self._last_restart = step
 
         return lrs
+
 
 class DecoderLayer(nn.Module):
     def __init__(self, d_model, heads, dropout=0.1, ff_shortcut=True):
@@ -219,9 +234,9 @@ class DecoderLayer(nn.Module):
     def forward(self, x, trg_mask):
         x2 = self.norm_1(x)
         x = x + self.dropout_1(self.attn_1(x2, x2, x2, trg_mask))
-        x2 = self.norm_2(x) # Changed to norm_2
+        x2 = self.norm_2(x)  # Changed to norm_2
         if self.ff_shortcut:
-            x = x + self.dropout_2(self.ff(x2)) # Changed to dropout_2
+            x = x + self.dropout_2(self.ff(x2))  # Changed to dropout_2
         else:
             x = self.dropout_2(self.ff(x2))
         return x
@@ -242,6 +257,7 @@ class Decoder(nn.Module):
         for i in range(self.N):
             x = self.layers[i](x, trg_mask)
         return self.norm(x)
+
 
 class Transformer(nn.Module):
     def __init__(self, trg_vocab, d_model, N, heads, dropout):
