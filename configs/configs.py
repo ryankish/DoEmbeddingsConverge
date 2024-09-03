@@ -24,25 +24,25 @@ experiment_0 = Box(
         },
         "model": {
             "vocab_size": 50257,
-            "d_model": 128,
+            "d_model": 512,
             "n_layers": 6,
             "heads": 8,
             "norm": 2.0,
             "seqlen": 512,
         },
         "training1": {
-            "batch_size": 3,
+            "batch_size": 12,
             "SGDR": False,
             "sched": None,
             "lr": 0.0001,
             "dropout": 0.1,
         },
         "training2": {
-            "epochs": 7,
+            "epochs": 40,
             "verbose": False,
-            "dev_subset": 12,  # for testing purposes only
+            "dev_subset": None,  # for testing purposes only
         },
-        "device": device,
+        "device": "cuda:1",
         "save_dir": save_dir
     }
 )
@@ -81,8 +81,8 @@ experiment_1 = Box(
             "dropout": experiment_0.training1.dropout,
         },
         "training2": {
-            "epochs": 2,
-            "dev_subset": 12,
+            "epochs": 40,
+            "dev_subset": None,
         },
         "device": device,
         "save_dir": save_dir

@@ -315,14 +315,18 @@ def experiment(opt):
 
     tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
     opt.vocab_size = tokenizer.vocab_size  # 50,257 from GPT2
+    train_text_path = os.path.join(opt.save_dir, 'data','wiki2.train.txt')
+    valid_text_path = os.path.join(opt.save_dir, 'data','wiki2.valid.txt')
+    test_text_path = os.path.join(opt.save_dir, 'data','wiki2.test.txt')
+
     train_text = read_corpus(
-        "data/wiki2.train.txt", tokenizer, first_n=opt.training2.dev_subset
+        train_text_path, tokenizer, first_n=opt.training2.dev_subset
     )
     valid_text = read_corpus(
-        "data/wiki2.valid.txt", tokenizer, first_n=opt.training2.dev_subset
+        valid_text_path, tokenizer, first_n=opt.training2.dev_subset
     )
     test_text = read_corpus(
-        "data/wiki2.test.txt", tokenizer, first_n=opt.training2.dev_subset
+        test_text_path, tokenizer, first_n=opt.training2.dev_subset
     )
     wiki_train = WikiDataset(opt.model.seqlen, train_text, overlapping=True)
     g = torch.Generator()
