@@ -1,11 +1,9 @@
-import importlib
-from box import Box
+from . import configs
 
-def load_experiment_config(experiment_name):
+
+def load_experiment_config(experiment_num):
+    experiment_name = f"experiment_{experiment_num}"
     try:
-        module = importlib.import_module(f".{experiment_name}", package="configs")
-        return getattr(module, "experiment_config")
-    except ImportError:
-        raise ValueError(f"Experiment configuration '{experiment_name}' not found.")
+        return getattr(configs, experiment_name)
     except AttributeError:
-        raise ValueError(f"Experiment configuration '{experiment_name}' is invalid.")
+        raise ValueError(f"Experiment configuration '{experiment_name}' not found.")

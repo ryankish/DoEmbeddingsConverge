@@ -13,11 +13,6 @@ def load_checkpoint_model(model, path):
     model.load_state_dict(checkpoint["model_state_dict"])
 
 
-# def load_model(model_path):
-#     model = Transformer()  # Assuming Transformer() creates a default model
-#     model.load_state_dict(torch.load(model_path))
-#     model.eval()  # Set the model to evaluation mode
-#     return model
 @torch.no_grad()
 def calculate_mse_between_models(model1, model2):
     mse_dict = {}
@@ -45,14 +40,18 @@ def main():
         raise ValueError("specify config name")
     experiment_id = sys.argv[1]
 
-    opt = load_experiment_config(f"exp{experiment_id}")
+    opt = load_experiment_config(f"{experiment_id}")
 
-    model1_path = (
-        f"experiments/{opt.core.experiment_id}/models/1/checkpoints/checkpoint_0.pt"
-    )
-    model2_path = (
-        f"experiments/{opt.core.experiment_id}/models/2/checkpoints/checkpoint_0.pt"
-    )
+    ckpt = 0
+
+    # model1_path = f"experiments/{opt.core.experiment_id}/models/1/ckpts/ckpt_{ckpt}.pt"
+    # model2_path = f"experiments/{opt.core.experiment_id}/models/2/ckpts/ckpt_{ckpt}.pt"
+
+    ckpt1 = 7
+    ckpt2 = 0
+    model1_path = f"experiments/0/models/1/ckpts/ckpt_{ckpt1}.pt"
+    model2_path = f"experiments/0/models/1/ckpts/ckpt_{ckpt2}.pt"
+
     model1 = Transformer(
         opt.model.vocab_size,
         opt.model.d_model,

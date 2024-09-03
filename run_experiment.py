@@ -5,26 +5,29 @@ import random
 import shutil
 import sys
 import time
+from os.path import exists
 
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import seaborn as sns
 import torch
 import torch.nn as nn
-import torch.optim as optim
-from box import Box
-from torch.utils.data import DataLoader, Dataset
+from colorama import Back, Fore, Style, init
+from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import GPT2TokenizerFast
 
-import model
-
-# from utils.options import Options
 from configs import load_experiment_config
 from data_utils import WikiDataset, create_masks, read_corpus
-from init_models import init_models
-from utils.color_print import cyan, green, orange, red
+from model_utils import (
+    freeze_non_wte_weights,
+    init_model,
+    init_wte,
+    load_checkpoint,
+    load_model,
+    save_checkpoint,
+    save_embeddings,
+)
 
 # Disable tokenizers parallelism
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -34,7 +37,7 @@ def seed_all(seed):
     if not seed:
         seed = 10
 
-    print("[ Using Seed : ", seed, " ]")
+    logging.info("[ Using Seed : ", seed, " ]")
 
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
@@ -50,55 +53,66 @@ def seed_all(seed):
 seed_all(42)
 
 
+init(autoreset=True)
+
+
+def setup_logging(opt):
+    # Remove all handlers associated with the root logger object
+    for handler in logging.root.handlers[:]:
+        logging.root.removeHandler(handler)
+
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    class ColorFormatter(logging.Formatter):
+        FADE = "\033[2m"  # Dim text
+        RESET = "\033[0m"  # Reset all attributes
+        FORMAT = f"{FADE}%(asctime)s - %(levelname)s -{RESET} %(message)s"
+        FORMATS = {
+            logging.DEBUG: Fore.CYAN + FORMAT + Style.RESET_ALL,
+            logging.INFO: Fore.GREEN + FORMAT + Style.RESET_ALL,
+            logging.WARNING: Fore.YELLOW + FORMAT + Style.RESET_ALL,
+            logging.ERROR: Fore.RED + FORMAT + Style.RESET_ALL,
+            logging.CRITICAL: Back.RED + Fore.WHITE + FORMAT + Style.RESET_ALL,
+        }
+
+        def format(self, record):
+            log_fmt = self.FORMATS.get(record.levelno)
+            formatter = logging.Formatter(log_fmt)
+            return formatter.format(record)
+
+    file_handler = logging.FileHandler(opt.log_path)
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(ColorFormatter())
+
+    logger.addHandler(file_handler)
+    logger.addHandler(stream_handler)
+
+    # Disable propagation to the root logger
+    logger.propagate = False
+
+
 def calculate_mse_torch(tensor1, tensor2):
     return torch.mean((tensor1 - tensor2) ** 2).item()
 
 
-def save_loss(
-    train_perplexities, valid_perplexities, test_perplexity, test_epoch, model_id, opt
-):
+def save_loss(train_perplexities, valid_perplexities, test_perplexity, test_epoch, opt):
     df = pd.DataFrame(
         {
             "train_perplexities": train_perplexities,
             "valid_perplexities": valid_perplexities,
-        }
+        },
+        index=range(1, len(train_perplexities) + 1),
     )
     df.index.name = "Epoch"
     df["test_perplexities"] = None
     df.at[test_epoch, "test_perplexities"] = test_perplexity
-    path = f"experiments/{opt.core.experiment_id}/models/{model_id}/perplexities.csv"
+    path = os.path.join(opt.viz_dir, "perplexities.csv")
     df.to_csv(path)
-
-
-def load_checkpoint(model, optimizer, path):
-    checkpoint = torch.load(path, weights_only=False)
-    model.load_state_dict(checkpoint["model_state_dict"])
-    optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-    logging.info("Model and optimizer states have been loaded successfully.")
-
-
-def load_model(model, checkpoint_path):
-    checkpoint = torch.load(checkpoint_path, weights_only=True)
-    model.load_state_dict(checkpoint["model_state_dict"])
-
-
-def save_checkpoint(model, optimizer, epoch, model_id, opt):
-    path = f"experiments/{opt.core.experiment_id}/models/{model_id}/checkpoints/checkpoint_{epoch}.pt"
-    os.makedirs(os.path.dirname(path))
-    torch.save(
-        {
-            "model_state_dict": model.state_dict(),
-            "optimizer_state_dict": optimizer.state_dict(),
-        },
-        path,
-    )
-    logging.info(f"Checkpoint saved at epoch {epoch} for model {model_id}")
-
-
-def save_embeddings(model, model_id, epoch, opt):
-    weights = model.decoder.embed.embed.weight.cpu().detach()
-    path = f"experiments/{opt.core.experiment_id}/models/{model_id}/embeddings/embed_weights_epoch_{epoch}.pt"
-    torch.save(weights, path)
 
 
 def create_folder_if_not_exists(folder_path):
@@ -107,30 +121,28 @@ def create_folder_if_not_exists(folder_path):
         logging.info(f"'{folder_path}' dir created.")
 
 
-def clear_directory(directory):
-    for filename in os.listdir(directory):
-        file_path = os.path.join(directory, filename)
-        try:
-            if os.path.isfile(file_path) or os.path.islink(file_path):
-                os.unlink(file_path)  # Remove the file or link
-            elif os.path.isdir(file_path):
-                shutil.rmtree(file_path)  # Remove the directory and all its contents
-        except Exception as e:
-            logging.error(f"Failed to delete {file_path}. Reason: {e}")
-    logging.info("Directory cleared")
+def rm_dir(directory_path):
+    try:
+        if os.path.exists(directory_path):
+            shutil.rmtree(directory_path)
+            logging.info(
+                f"Directory '{directory_path}' and its contents have been removed successfully."
+            )
+        else:
+            logging.info(f"Directory '{directory_path}' does not exist.")
+    except Exception as e:
+        logging.info(f"An error occurred while removing the directory: {e}")
 
 
 def train_model(model, optimizer, opt, model_id):
     train_str = f"Training Model {model_id}"
     stars = "*" * len(train_str)
-    cyan(stars)
-    cyan(train_str)
-    cyan(stars)
+    logging.info(stars)
+    logging.info(train_str)
+    logging.info(stars)
 
-    sys.exit()
-
-    save_embeddings(model, model_id, 0, opt)
-    save_checkpoint(model, optimizer, 0, model_id, opt)
+    save_embeddings(model, 0, opt)
+    save_checkpoint(model, optimizer, 0, opt)
 
     criterion = nn.CrossEntropyLoss()
     train_loader = opt.train_loader
@@ -143,7 +155,8 @@ def train_model(model, optimizer, opt, model_id):
         total_loss = 0
         total_batches = 0
         logging.info(f"Epoch: {epoch} ... training")
-        for input_ids, targets in tqdm(train_loader):
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch}", leave=False)
+        for input_ids, targets in pbar:
             input_ids = input_ids.to(opt.device)
             targets = targets.to(opt.device)
             input_mask = create_masks(input_ids)
@@ -160,6 +173,9 @@ def train_model(model, optimizer, opt, model_id):
             loss.backward()
             optimizer.step()
 
+            batch_perplexity = math.exp(loss.item())
+            pbar.set_description(f"Epoch {epoch} - Batch PPL: {batch_perplexity:.2f}")
+
         avg_loss = total_loss / total_batches
         train_perplexity = math.exp(avg_loss)
         logging.info(f"Epoch: {epoch} - Train Perplexity: {train_perplexity}")
@@ -169,85 +185,73 @@ def train_model(model, optimizer, opt, model_id):
         logging.info(f"Epoch: {epoch} - Valid Perplexity: {valid_perplexity}")
         valid_perplexities.append(valid_perplexity)
 
-        # save embeddings
-        save_embeddings(model, model_id, epoch, opt)
-        if (epoch) % 10 == 0 or epoch == 1:
-            save_checkpoint(model, optimizer, epoch, model_id, opt)
+        save_embeddings(model, epoch, opt)
+        if (epoch) % 10 == 0 or epoch == 1 or epoch == opt.training2.epochs:
+            save_checkpoint(model, optimizer, epoch, opt)
 
-    # Done training
     test_perplexity = test_model(model, opt, dataset="test")
     logging.info(f"Test Perplexity: {test_perplexity}")
 
     last_epoch = opt.training2.epochs
-    plot_perplexity(train_perplexities, valid_perplexities, model_id, opt)
-    save_loss(
-        train_perplexities,
-        valid_perplexities,
-        test_perplexity,
-        last_epoch,
-        model_id,
-        opt,
-    )
+    plot_perplexity(train_perplexities, valid_perplexities, opt)
+    save_loss(train_perplexities, valid_perplexities, test_perplexity, last_epoch, opt)
     return model
 
 
+@torch.no_grad()
 def test_model(model, opt, dataset="valid"):
     model.eval()
 
     criterion = nn.CrossEntropyLoss()
     if dataset == "test":
-        wiki_test_loader = opt.test_loader
+        test_loader = opt.test_loader
     elif dataset == "valid":
-        wiki_test_loader = opt.valid_loader
+        test_loader = opt.valid_loader
     elif dataset == "train":
-        wiki_test_loader = opt.train_loader
+        test_loader = opt.train_loader
     total_loss = 0
     total_batches = 0
 
-    with torch.no_grad():
-        for input_ids, targets in tqdm(wiki_test_loader):
-            input_ids = input_ids.to(opt.torch_device)
-            targets = targets.to(opt.torch_device)
-            input_mask = create_masks(input_ids)
+    pbar = tqdm(test_loader, desc=f"Validating", leave=False)
+    for input_ids, targets in pbar:
+        input_ids = input_ids.to(opt.device)
+        targets = targets.to(opt.device)
+        input_mask = create_masks(input_ids)
 
-            outputs = model(input_ids, input_mask)
-            outputs = outputs.view(-1, outputs.size(-1))
-            targets = targets.view(-1)
+        outputs = model(input_ids, input_mask)
+        outputs = outputs.view(-1, outputs.size(-1))
+        targets = targets.view(-1)
 
-            loss = criterion(outputs, targets)
-            total_loss += loss.item()
-            total_batches += 1
+        loss = criterion(outputs, targets)
+        total_loss += loss.item()
+        total_batches += 1
+
+        batch_perplexity = math.exp(loss.item())
+        pbar.set_description(f"Val Batch PPL: {batch_perplexity:.2f}")
 
     avg_loss = total_loss / total_batches
     return math.exp(avg_loss)
 
 
-def plot_perplexity(train_perplexities, valid_perplexities, model_id, opt):
+def plot_perplexity(train_perplexities, valid_perplexities, opt):
     plt.figure()
-    plt.plot(train_perplexities, label="Train Perplexity")
-    plt.plot(valid_perplexities, label="Valid Perplexity")
-    if opt.experiment_core.plot_title:
-        plt.title(opt.plot_title)
+    epochs = range(1, len(train_perplexities) + 1)
+    plt.plot(epochs, train_perplexities, label="Train Perplexity")
+    plt.plot(epochs, valid_perplexities, label="Valid Perplexity")
+    if opt.core.plot_title:
+        plt.title(opt.core.plot_title)
     else:
-        plt.title(f"Model {model_id} Perplexity")
+        plt.title(f"Model {opt.model_id} Perplexity")
     plt.xlabel("Epoch")
     plt.ylabel("Perplexity")
     plt.legend()
-    path = f"experiments/{opt.experiment_id}/models/{model_id}/Model {model_id} Perplexity.png"
+    path = os.path.join(opt.viz_dir, f"Model {opt.model_id} Perplexity.png")
     logging.info(f"Saving to {path}")
     plt.savefig(path)
 
 
-def freeze_weights(model):
-    for param in model.parameters():
-        param.requires_grad = False
-    model.decoder.embed.embed.weight.requires_grad = True
-
-
 def dataloader_testing(opt):
-    input_ids_run_path = (
-        f"experiments/{opt.core.experiment_id}/models/{opt.model_id}/data/input_ids.txt"
-    )
+    input_ids_run_path = os.path.join(opt.model_dir, "data", "input_ids.txt")
     create_folder_if_not_exists(os.path.dirname(input_ids_run_path))
     seed_all(42)
     with open(input_ids_run_path, "w") as f:
@@ -259,43 +263,43 @@ def dataloader_testing(opt):
     return input_ids_run_path
 
 
-# Source: https://discuss.pytorch.org/t/reproducibility-with-all-the-bells-and-whistles/81097/7
 def seed_worker(worker_id):
     worker_seed = torch.initial_seed() % 2**32
-    print(worker_seed)
     np.random.seed(worker_seed)
     random.seed(worker_seed)
 
 
 def experiment(opt):
 
-    # opt = Options()
-    # opt.make_vars(args_dict)
-    # opt.device = 0 if opt.no_cuda is False else -1
-    if not opt.device.no_cuda and torch.cuda.is_available():
-        opt.torch_device = torch.device(opt.device.device)
-    else:
-        opt.torch_device = torch.device("cpu")
+    opt.exp_dir = f"experiments/{opt.core.experiment_id}"
+    os.makedirs(opt.exp_dir, exist_ok=True)
+    opt.log_path = os.path.join(opt.exp_dir, f"model{opt.model_id}.log")
+    setup_logging(opt)
 
-    exp_dir = f"experiments/{opt.core.experiment_id}"
-    model_dir = os.path.join(exp_dir, "models", str(opt.model_id))
-    if os.path.exists(model_dir):
-        logging.info(
+    opt.model_dir = os.path.join(opt.exp_dir, "models", str(opt.model_id))
+    opt.wte_dir = os.path.join(opt.model_dir, "wte")
+    opt.ckpt_dir = os.path.join(opt.model_dir, "ckpts")
+    opt.viz_dir = os.path.join(opt.model_dir, "viz")
+
+    if os.path.exists(opt.model_dir):
+        logging.warning(
             f"Experiment {opt.core.experiment_id} model {opt.model_id} already exists"
         )
-        logging.info("Do you wish to overwrite?")
-        logging.info("y/n")
+        logging.warning("Do you wish to overwrite?")
+        logging.warning("y/n")
         response = input("Do you wish to overwrite? (y/n): ")
         if response.lower() == "y":
-            logging.info("Overwriting")
-            clear_directory(model_dir)
+            logging.warning("Overwriting")
+            rm_dir(opt.model_dir)
         else:
-            logging.info("Exiting")
+            logging.warning("Exiting")
             sys.exit()
-    else:
-        os.makedirs(model_dir)
-        os.makedirs(os.path.join(model_dir, "embeddings"))
-        logging.info(f"Experiment directory created ({model_dir})")
+
+    os.makedirs(opt.model_dir)
+    os.makedirs(opt.wte_dir)
+    os.makedirs(opt.ckpt_dir)
+    os.makedirs(opt.viz_dir)
+    logging.info(f"Experiment directory created ({opt.model_dir})")
 
     exp_str = (
         "=" * 10
@@ -303,21 +307,25 @@ def experiment(opt):
         + "=" * 10
     )
     border = "=" * len(exp_str)
-    green(border)
-    green(exp_str)
-    green(border)
+    logging.info(border)
+    logging.info(exp_str)
+    logging.info(border)
 
     start_time = time.time()
 
     tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
     opt.vocab_size = tokenizer.vocab_size  # 50,257 from GPT2
     train_text = read_corpus(
-        "data/wiki2.train.txt", tokenizer, first_n=opt.training2.train_subset
+        "data/wiki2.train.txt", tokenizer, first_n=opt.training2.dev_subset
     )
-    valid_text = read_corpus("data/wiki2.valid.txt", tokenizer)
-    test_text = read_corpus("data/wiki2.test.txt", tokenizer)
-    g = torch.Generator()
+    valid_text = read_corpus(
+        "data/wiki2.valid.txt", tokenizer, first_n=opt.training2.dev_subset
+    )
+    test_text = read_corpus(
+        "data/wiki2.test.txt", tokenizer, first_n=opt.training2.dev_subset
+    )
     wiki_train = WikiDataset(opt.model.seqlen, train_text, overlapping=True)
+    g = torch.Generator()
     g.manual_seed(0)
     wiki_train_loader = DataLoader(
         wiki_train,
@@ -348,61 +356,35 @@ def experiment(opt):
     )
 
     opt.train_loader = wiki_train_loader
-
     opt.valid_loader = wiki_valid_loader
-
     opt.test_loader = wiki_test_loader
 
-    model = init_models(opt)
+    model = init_model(opt)
     opt.optimizer = torch.optim.Adam(
         model.parameters(), lr=opt.training1.lr, betas=(0.9, 0.98), eps=1e-9
     )
 
-    save_checkpoint(
-        model=model, optimizer=opt.optimizer, epoch=0, model_id=opt.model_id, opt=opt
-    )
     if opt.core.lock_weights and opt.core.starter_model_path:
         load_model(model, opt.core.starter_model_path)
-        # load_model(model2, opt.core.starter_model_path)
-        freeze_weights(model)
-        # freeze_weights(model2)
-        # mse = calculate_mse_torch(
-        #     model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight
-        # )
-        # assert mse == 0.0
-        # TODO: make it so it can handle other init strategies in init_models.py
-        # torch.manual_seed(1)
-        # with torch.no_grad():
-        #     nn.init.xavier_normal_(model1.decoder.embed.embed.weight)
-        # torch.manual_seed(2)
-        # with torch.no_grad():
-        #     nn.init.xavier_normal_(model2.decoder.embed.embed.weight)
-        # mse = calculate_mse_torch(
-        #     model1.decoder.embed.embed.weight, model2.decoder.embed.embed.weight
-        # )
-        # logging.info(f"initial mse from preloaded and reinit: {mse}")
+
+        init_wte(
+            model,
+            opt.core[f"model{opt.model_id}_embed_init"],
+            opt.core[f"model{opt.model_id}_embed_init_seed"],
+        )
+        freeze_non_wte_weights(model)
 
     # count parameters
     model_parameters = filter(lambda p: p.requires_grad, model.parameters())
     params = sum([np.prod(p.size()) for p in model_parameters])
-    red(f"total params: {params}")
     logging.info(f"total params: {params}")
 
-    # opt.optimizer2 = torch.optim.Adam(
-    #     model2.parameters(), lr=opt.training1.lr, betas=(0.9, 0.98), eps=1e-9
-    # )
     if opt.run.test_dataloader:
         dataloader_testing(opt)
-    else:  # traing
+    else:  # training
         model = train_model(model, opt.optimizer, opt, model_id=opt.model_id)
 
-    #
-    # model1 = train_model(model1, opt.optimizer1, opt, model_id=1)
-    # if opt.core.experiment_id != 0:
-    #     model2 = train_model(model2, opt.optimizer2, opt, model_id=2)
-    #
-
-    green(f"Time taken: {time.time() - start_time}")
+    logging.info(f"Time taken: {time.time() - start_time}")
 
 
 def main():
@@ -412,11 +394,8 @@ def main():
     experiment_num = sys.argv[1]
     model_id = int(sys.argv[2])
 
-    opt = load_experiment_config(f"exp{experiment_num}")
+    opt = load_experiment_config(experiment_num)
     opt.model_id = model_id
-    print(opt.core.experiment_id)
-    print(opt.model.d_model)
-
     create_folder_if_not_exists("experiments")
     experiment(opt)
 

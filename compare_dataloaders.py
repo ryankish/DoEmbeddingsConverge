@@ -1,20 +1,26 @@
+from tqdm import tqdm
+
+
 def compare_input_ids_between_runs(input_ids_run1_path, input_ids_run2_path):
     with open(input_ids_run1_path, "r") as f1, open(input_ids_run2_path, "r") as f2:
-        lines1 = f1.readlines()
-        lines2 = f2.readlines()
+        total_lines = sum(1 for _ in f1)
+        f1.seek(0)
 
-    if len(lines1) != len(lines2):
-        print("Error: Files have different number of lines.")
-        return
+        with tqdm(total=total_lines, desc="Comparing input IDs") as pbar:
+            for i, (line1, line2) in enumerate(zip(f1, f2), start=1):
+                if line1 != line2:
+                    print(f"\nMismatch at line {i}:")
+                    print(f"Run 1: {line1.strip()}")
+                    print(f"Run 2: {line2.strip()}")
+                    return
+                pbar.update(1)
 
-    for i, (line1, line2) in enumerate(zip(lines1, lines2)):
-        if line1 != line2:
-            print(f"Mismatch at line {i+1}:")
-            print(f"Run 1: {line1.strip()}")
-            print(f"Run 2: {line2.strip()}")
+        # Check if one file has more lines than the other
+        if f1.readline() or f2.readline():
+            print("\nError: Files have different number of lines.")
             return
 
-    print("All input IDs are identical between the two runs.")
+    print("\nAll input IDs are identical between the two runs.")
 
 
 def main():
