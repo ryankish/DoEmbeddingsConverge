@@ -1,5 +1,9 @@
 from box import Box
 
+# save_dir = ''
+save_dir = '/data/ryan/other'
+device = "cuda:5"
+
 experiment_0 = Box(
     {
         "core": {
@@ -38,7 +42,8 @@ experiment_0 = Box(
             "verbose": False,
             "dev_subset": 12,  # for testing purposes only
         },
-        "device": "mps",
+        "device": device,
+        "save_dir": save_dir
     }
 )
 
@@ -79,7 +84,8 @@ experiment_1 = Box(
             "epochs": 2,
             "dev_subset": 12,
         },
-        "device": "mps",
+        "device": device,
+        "save_dir": save_dir
     }
 )
 
@@ -120,6 +126,7 @@ experiment_2 = Box(
             "epochs": 2,
             "dev_subset": 12,
         },
-        "device": "mps",
+        "device": device,
+        "save_dir": save_dir
     }
 )

@@ -270,8 +270,8 @@ def seed_worker(worker_id):
 
 
 def experiment(opt):
-
-    opt.exp_dir = f"experiments/{opt.core.experiment_id}"
+    opt.exp_dir = os.path.join(opt.save_dir, 'experiments', str(opt.core.experiment_id))
+    # opt.exp_dir = f"experiments/{opt.core.experiment_id}"
     os.makedirs(opt.exp_dir, exist_ok=True)
     opt.log_path = os.path.join(opt.exp_dir, f"model{opt.model_id}.log")
     setup_logging(opt)
@@ -395,8 +395,11 @@ def main():
     model_id = int(sys.argv[2])
 
     opt = load_experiment_config(experiment_num)
+
+    # print(os.path.join(opt.save_dir, 'experiments'))
+    # sys.exit()
     opt.model_id = model_id
-    create_folder_if_not_exists("experiments")
+    # create_folder_if_not_exists("experiments")
     experiment(opt)
 
 
