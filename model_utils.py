@@ -17,8 +17,8 @@ def load_model(model, checkpoint_path):
     model.load_state_dict(checkpoint["model_state_dict"])
 
 
-def save_checkpoint(model, optimizer, epoch, opt):
-    path = os.path.join(opt.ckpt_dir, f"ckpt_{epoch}.pt")
+def save_checkpoint(model, optimizer, step, opt):
+    path = os.path.join(opt.ckpt_dir, f"ckpt_{step}.pt")
     torch.save(
         {
             "model_state_dict": model.state_dict(),
@@ -28,9 +28,9 @@ def save_checkpoint(model, optimizer, epoch, opt):
     )
 
 
-def save_embeddings(model, epoch, opt):
+def save_embeddings(model, step, opt):
     weights = model.decoder.embed.embed.weight.cpu().detach()
-    path = os.path.join(opt.wte_dir, f"wte_epoch{epoch}.pt")
+    path = os.path.join(opt.wte_dir, f"wte_step{step}.pt")
     torch.save(weights, path)
 
 

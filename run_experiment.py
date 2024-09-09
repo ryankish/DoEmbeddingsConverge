@@ -100,17 +100,23 @@ def calculate_mse_torch(tensor1, tensor2):
     return torch.mean((tensor1 - tensor2) ** 2).item()
 
 
-def save_loss(train_perplexities, valid_perplexities, test_perplexity, test_epoch, opt):
+def save_loss(
+    train_perplexities, valid_perplexities, test_perplexity, current_step, opt
+):
     df = pd.DataFrame(
         {
             "train_perplexities": train_perplexities,
             "valid_perplexities": valid_perplexities,
         },
-        index=range(1, len(train_perplexities) + 1),
+        index=range(
+            opt.training2.evaluate_every_n_steps,
+            current_step + 1,
+            opt.training2.evaluate_every_n_steps,
+        ),
     )
-    df.index.name = "Epoch"
+    df.index.name = "Step"
     df["test_perplexities"] = None
-    df.at[test_epoch, "test_perplexities"] = test_perplexity
+    df.at[current_step, "test_perplexities"] = test_perplexity
     path = os.path.join(opt.viz_dir, "perplexities.csv")
     df.to_csv(path)
 
@@ -140,68 +146,92 @@ def train_model(model, optimizer, opt, model_id):
     logging.info(stars)
     logging.info(train_str)
     logging.info(stars)
-
     save_embeddings(model, 0, opt)
     save_checkpoint(model, optimizer, 0, opt)
-
     criterion = nn.CrossEntropyLoss()
     train_loader = opt.train_loader
-
     train_perplexities = []
     valid_perplexities = []
 
-    for epoch in range(1, opt.training2.epochs + 1):
-        model.train()
+    total_steps = opt.training2.total_steps
+    current_step = 0
+    epoch = 0
+
+    model.train()
+    input_ids_run_path = os.path.join(
+        opt.model_dir, "data", "train_input_ids.txt"
+    )  # delete later
+    create_folder_if_not_exists(os.path.dirname(input_ids_run_path))  # delete later
+
+    pbar = tqdm(total=total_steps, desc="Training Progress", leave=False)
+
+    while current_step < total_steps:
+        epoch += 1
         total_loss = 0
         total_batches = 0
         logging.info(f"Epoch: {epoch} ... training")
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch}", leave=False)
-        for input_ids, targets in pbar:
+
+        for batch_idx, (input_ids, targets) in enumerate(train_loader):
+            if current_step >= total_steps:
+                break
+
+            with open(input_ids_run_path, "a") as f:  # delete later
+                f.write(f"Step {current_step}, Batch {batch_idx}:\n")  # delete later
+                f.write(" ".join(map(str, input_ids.tolist())) + "\n\n")  # delete later
+
             input_ids = input_ids.to(opt.device)
             targets = targets.to(opt.device)
             input_mask = create_masks(input_ids)
-
             outputs = model(input_ids, input_mask)
             outputs = outputs.view(-1, outputs.size(-1))
             targets = targets.view(-1)
-
             loss = criterion(outputs, targets)
             total_loss += loss.item()
             total_batches += 1
-
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
+            current_step += 1
             batch_perplexity = math.exp(loss.item())
-            pbar.set_description(f"Epoch {epoch} - Batch PPL: {batch_perplexity:.2f}")
+            pbar.set_description(
+                f"Step {current_step}/{total_steps} - Batch PPL: {batch_perplexity:.2f}"
+            )
+            pbar.update(1)
 
-        avg_loss = total_loss / total_batches
-        train_perplexity = math.exp(avg_loss)
-        logging.info(f"Epoch: {epoch} - Train Perplexity: {train_perplexity}")
-        train_perplexities.append(train_perplexity)
+            if current_step % opt.training2.save_every_n_steps == 0:
+                save_checkpoint(model, optimizer, current_step, opt)
 
-        valid_perplexity = test_model(model, opt, dataset="valid")
-        logging.info(f"Epoch: {epoch} - Valid Perplexity: {valid_perplexity}")
-        valid_perplexities.append(valid_perplexity)
+            if current_step % opt.training2.evaluate_every_n_steps == 0:
+                avg_loss = total_loss / total_batches
+                train_perplexity = math.exp(avg_loss)
+                logging.info(
+                    f"Step: {current_step} - Train Perplexity: {train_perplexity}"
+                )
+                train_perplexities.append(train_perplexity)
+                valid_perplexity = test_model(model, opt, dataset="valid")
+                logging.info(
+                    f"Step: {current_step} - Valid Perplexity: {valid_perplexity}"
+                )
+                valid_perplexities.append(valid_perplexity)
+                save_embeddings(model, current_step, opt)
+                total_loss = 0
+                total_batches = 0
+                model.train()  # Set model back to training mode after evaluation
 
-        save_embeddings(model, epoch, opt)
-        if (epoch) % 10 == 0 or epoch == 1 or epoch == opt.training2.epochs:
-            save_checkpoint(model, optimizer, epoch, opt)
-
+    pbar.close()
     test_perplexity = test_model(model, opt, dataset="test")
     logging.info(f"Test Perplexity: {test_perplexity}")
-
-    last_epoch = opt.training2.epochs
     plot_perplexity(train_perplexities, valid_perplexities, opt)
-    save_loss(train_perplexities, valid_perplexities, test_perplexity, last_epoch, opt)
+    save_loss(
+        train_perplexities, valid_perplexities, test_perplexity, current_step, opt
+    )
     return model
 
 
 @torch.no_grad()
 def test_model(model, opt, dataset="valid"):
     model.eval()
-
     criterion = nn.CrossEntropyLoss()
     if dataset == "test":
         test_loader = opt.test_loader
@@ -209,40 +239,76 @@ def test_model(model, opt, dataset="valid"):
         test_loader = opt.valid_loader
     elif dataset == "train":
         test_loader = opt.train_loader
+    else:
+        raise ValueError(f"Invalid dataset: {dataset}")
+
     total_loss = 0
     total_batches = 0
+    total_samples = 0
 
-    pbar = tqdm(test_loader, desc=f"Validating", leave=False)
-    for input_ids, targets in pbar:
-        input_ids = input_ids.to(opt.device)
-        targets = targets.to(opt.device)
-        input_mask = create_masks(input_ids)
+    eval_steps = opt.training2.eval_steps
+    input_ids_run_path = os.path.join(
+        opt.model_dir, "data", "val_input_ids.txt"
+    )  # delete later
+    create_folder_if_not_exists(os.path.dirname(input_ids_run_path))  # delete later
 
-        outputs = model(input_ids, input_mask)
-        outputs = outputs.view(-1, outputs.size(-1))
-        targets = targets.view(-1)
+    with torch.no_grad():
+        pbar = tqdm(
+            test_loader, desc=f"Evaluating on {dataset}", leave=False, total=eval_steps
+        )
+        for batch_idx, (input_ids, targets) in enumerate(pbar):
+            if eval_steps is not None and total_batches >= eval_steps:
+                break
 
-        loss = criterion(outputs, targets)
-        total_loss += loss.item()
-        total_batches += 1
+            with open(input_ids_run_path, "a") as f:  # delete later
+                f.write(f"Step {0}, Batch {batch_idx}:\n")  # delete later
+                f.write(" ".join(map(str, input_ids.tolist())) + "\n\n")  # delete later
 
-        batch_perplexity = math.exp(loss.item())
-        pbar.set_description(f"Val Batch PPL: {batch_perplexity:.2f}")
+            input_ids = input_ids.to(opt.device)
+            targets = targets.to(opt.device)
+            input_mask = create_masks(input_ids)
+            outputs = model(input_ids, input_mask)
+            outputs = outputs.view(-1, outputs.size(-1))
+            targets = targets.view(-1)
+            loss = criterion(outputs, targets)
 
-    avg_loss = total_loss / total_batches
-    return math.exp(avg_loss)
+            batch_size = input_ids.size(0)
+            total_loss += loss.item() * batch_size
+            total_batches += 1
+            total_samples += batch_size
+
+            batch_perplexity = math.exp(loss.item())
+            pbar.set_description(
+                f"{dataset.capitalize()} Batch PPL: {batch_perplexity:.2f}"
+            )
+
+            if eval_steps is not None:
+                pbar.update(1)
+
+    avg_loss = total_loss / total_samples
+    perplexity = math.exp(avg_loss)
+
+    logging.info(
+        f"{dataset.capitalize()} Perplexity: {perplexity:.2f} (evaluated on {total_samples} samples)"
+    )
+
+    return perplexity
 
 
 def plot_perplexity(train_perplexities, valid_perplexities, opt):
     plt.figure()
-    epochs = range(1, len(train_perplexities) + 1)
-    plt.plot(epochs, train_perplexities, label="Train Perplexity")
-    plt.plot(epochs, valid_perplexities, label="Valid Perplexity")
+    xticks = range(
+        opt.training2.evaluate_every_n_steps,
+        opt.training2.total_steps + 1,
+        opt.training2.evaluate_every_n_steps,
+    )
+    plt.plot(xticks, train_perplexities, label="Train Perplexity")
+    plt.plot(xticks, valid_perplexities, label="Valid Perplexity")
     if opt.core.plot_title:
         plt.title(opt.core.plot_title)
     else:
         plt.title(f"Model {opt.model_id} Perplexity")
-    plt.xlabel("Epoch")
+    plt.xlabel("Steps")
     plt.ylabel("Perplexity")
     plt.legend()
     path = os.path.join(opt.viz_dir, f"Model {opt.model_id} Perplexity.png")
@@ -270,7 +336,7 @@ def seed_worker(worker_id):
 
 
 def experiment(opt):
-    opt.exp_dir = os.path.join(opt.save_dir, 'experiments', str(opt.core.experiment_id))
+    opt.exp_dir = os.path.join(opt.save_dir, "experiments", str(opt.core.experiment_id))
     # opt.exp_dir = f"experiments/{opt.core.experiment_id}"
     os.makedirs(opt.exp_dir, exist_ok=True)
     opt.log_path = os.path.join(opt.exp_dir, f"model{opt.model_id}.log")
@@ -315,9 +381,9 @@ def experiment(opt):
 
     tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
     opt.vocab_size = tokenizer.vocab_size  # 50,257 from GPT2
-    train_text_path = os.path.join(opt.save_dir, 'data','wiki2.train.txt')
-    valid_text_path = os.path.join(opt.save_dir, 'data','wiki2.valid.txt')
-    test_text_path = os.path.join(opt.save_dir, 'data','wiki2.test.txt')
+    train_text_path = os.path.join(opt.save_dir, "data", "wiki2.train.txt")
+    valid_text_path = os.path.join(opt.save_dir, "data", "wiki2.valid.txt")
+    test_text_path = os.path.join(opt.save_dir, "data", "wiki2.test.txt")
 
     train_text = read_corpus(
         train_text_path, tokenizer, first_n=opt.training2.dev_subset
@@ -325,9 +391,7 @@ def experiment(opt):
     valid_text = read_corpus(
         valid_text_path, tokenizer, first_n=opt.training2.dev_subset
     )
-    test_text = read_corpus(
-        test_text_path, tokenizer, first_n=opt.training2.dev_subset
-    )
+    test_text = read_corpus(test_text_path, tokenizer, first_n=opt.training2.dev_subset)
     wiki_train = WikiDataset(opt.model.seqlen, train_text, overlapping=True)
     g = torch.Generator()
     g.manual_seed(0)
@@ -368,7 +432,8 @@ def experiment(opt):
         model.parameters(), lr=opt.training1.lr, betas=(0.9, 0.98), eps=1e-9
     )
 
-    if opt.core.lock_weights and opt.core.starter_model_path:
+    if opt.core.lock_weights:
+        assert opt.core.starter_model_path
         load_model(model, opt.core.starter_model_path)
 
         init_wte(
@@ -379,9 +444,12 @@ def experiment(opt):
         freeze_non_wte_weights(model)
 
     # count parameters
-    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
-    params = sum([np.prod(p.size()) for p in model_parameters])
-    logging.info(f"total params: {params}")
+    total_params = sum(p.numel() for p in model.parameters())
+    total_trainable_params = sum(
+        p.numel() for p in model.parameters() if p.requires_grad
+    )
+    logging.info(f"Total parameters: {total_params}")
+    logging.info(f"Total trainable parameters: {total_trainable_params}")
 
     if opt.run.test_dataloader:
         dataloader_testing(opt)
