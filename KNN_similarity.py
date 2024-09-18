@@ -5,66 +5,30 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch
-from embedding_translator import LinearRegressionMapper
-from sklearn.metrics.pairwise import (cosine_similarity, euclidean_distances,
-                                      linear_kernel)
+from sklearn.metrics.pairwise import (
+    cosine_similarity,
+    euclidean_distances,
+    linear_kernel,
+)
 from tqdm import tqdm
 
 
-def get_embed_weights_files(experiment_id, model_id, epoch):
-    target_directory = os.path.join(
-        "experiments", str(experiment_id), "models", str(model_id), "embeddings"
-    )
-    try:
-        files = os.listdir(target_directory)
-    except FileNotFoundError:
-        return []
-
-    # Filter out files that match the pattern 'embed_weights_epoch_<number>.pt'
-    pattern = re.compile(r"embed_weights_epoch_(\d+)\.pt")
-    epoch_files = [
-        f
-        for f in files
-        if pattern.match(f) and int(pattern.search(f).group(1)) == epoch
-    ]
-
-    return [os.path.join(target_directory, f) for f in epoch_files]
+def load_wtes(opt, step):
+    path_fmt = "experiments/{}/models/{}/wte/wte_step{}.pt"
+    wte1_path = path_fmt.format(opt.experiment_id, 1, step)
+    wte2_path = path_fmt.format(opt.experiment_id, 2, step)
+    wte1 = torch.load(wte1_path, weights_only=True)
+    wte2 = torch.load(wte2_path, weights_only=True)
+    return wte1, wte2
 
 
-def load_weights_as_tensors(weights_path):
-    return torch.load(weights_path)
-
-
-def extract_epoch_number(filename):
-    pattern = re.compile(r"embed_weights_epoch_(\d+)\.pt")
-    match = pattern.search(filename)
-    if match:
-        return int(match.group(1))
-    else:
-        return None
-
-
-def load_embeddings_for_epoch(opt, epoch):
-    embedding1_files = get_embed_weights_files(opt.experiment_id, 1, epoch)
-    embedding2_files = get_embed_weights_files(opt.experiment_id, 2, epoch)
-
-    assert len(embedding1_files) == len(
-        embedding2_files
-    ), "Different number of epoch files for model 1 and model 2"
-
-    embeddings1 = [load_weights_as_tensors(f) for f in embedding1_files]
-    embeddings2 = [load_weights_as_tensors(f) for f in embedding2_files]
-
-    return embeddings1[0], embeddings2[0]
-
-
-def knn_match_percentage_one_by_one(embedding1, embedding2, k, distance_metric):
+def tokenwise_knn_sim(wte1, wte2, k, distance_metric):
     if distance_metric == "euclidean":
-        distances = euclidean_distances(embedding1, embedding2)
+        distances = euclidean_distances(wte1, wte2)
     elif distance_metric == "cosine":
-        distances = 1 - cosine_similarity(embedding1, embedding2)
+        distances = 1 - cosine_similarity(wte1, wte2)
     elif distance_metric == "inner_product":
-        distances = -linear_kernel(embedding1, embedding2)
+        distances = -linear_kernel(wte1, wte2)
     else:
         raise ValueError(
             "Invalid distance metric. Choose from 'euclidean', 'cosine', 'inner_product'"
@@ -72,7 +36,7 @@ def knn_match_percentage_one_by_one(embedding1, embedding2, k, distance_metric):
 
     matches_per_token = []
 
-    for i in tqdm(range(embedding1.shape[0]), desc="Calculating KNN similarity"):
+    for i in tqdm(range(wte1.shape[0]), desc="Calculating KNN similarity"):
         knn_indices_1 = np.argsort(distances[i])[:k]
         knn_indices_2 = np.argsort(distances[:, i])[:k]
         matches = len(set(knn_indices_1).intersection(set(knn_indices_2)))
@@ -81,6 +45,31 @@ def knn_match_percentage_one_by_one(embedding1, embedding2, k, distance_metric):
     match_percentage_per_token = [(matches / k) for matches in matches_per_token]
 
     return match_percentage_per_token
+
+
+def plot_knn_hist(knn_values, opt, step):
+
+    fig, ax = plt.subplots()
+    plt.ylim(0, opt.hist_y_max)
+    sns.histplot(knn_values, bins=10, kde=False, ax=ax)
+    plt.title(
+        f"Histogram of KNN Match Percentage with {opt.distance_metric} k={opt.k} step={step}"
+    )
+    save_path = f"experiments/{opt.experiment_id}/viz/knn_sim_hist/knn_sim_hist_{opt.distance_metric}_step_{step}.png"
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path)
+    plt.close()
+
+
+def plot_knn_line(opt, mean_knn_values):
+    fig, ax = plt.subplots()
+    plt.ylim(0, opt.line_y_max)
+    plt.plot(opt.steps, mean_knn_values)
+    plt.title(f"KNN Match Percentage with {opt.distance_metric} k={opt.k} step={step}")
+    save_path = f"experiments/{opt.experiment_id}/viz/knn_sim_line/knn_sim_line_{opt.distance_metric}.png"
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path)
+    plt.close()
 
 
 class Options:
@@ -96,31 +85,34 @@ if __name__ == "__main__":
     opt = Options()
     opt.make_vars(
         {
-            "experiment_id": 1,
+            "experiment_id": 2,
             "distance_metric": "inner_product",
             "k": 10,
-            "epochs": [0, 40],
+            "steps": range(0, 10000 + 1, 1000),
+            "hist_y_max": 50257 + 1000,
+            "line_y_max": 0.35,
+            "compute_knn_sim": True,
         }
     )
+    mean_knn_values = []
+    for step in opt.steps:
 
-    for epoch in opt.epochs:
-        embedding1, embedding2 = load_embeddings_for_epoch(opt, epoch)
-        # print(embedding1.shape[0])
-        # knn_values = knn_match_percentage_one_by_one(embedding1.numpy(), embedding2.numpy(), opt.k, opt.distance_metric)
-
-        # np.save(f'experiments/{opt.experiment_id}/knn_sim_{opt.distance_metric}_epoch_{epoch}.npy', knn_values)
+        if opt.compute_knn_sim:
+            wte1, wte2 = load_wtes(opt, step)
+            knn_values = tokenwise_knn_sim(
+                wte1.numpy(), wte2.numpy(), opt.k, opt.distance_metric
+            )
+            save_path = f"experiments/{opt.experiment_id}/knn_sims/knn_sim_{opt.distance_metric}_step_{step}.npy"
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            np.save(save_path, knn_values)
 
         knn_values = np.load(
-            f"experiments/{opt.experiment_id}/knn_sim_{opt.distance_metric}_epoch_{epoch}.npy"
+            f"experiments/{opt.experiment_id}/knn_sims/knn_sim_{opt.distance_metric}_step_{step}.npy"
         )
-        print("Mean KNN Sim", np.mean(knn_values))
+        mean_knn_val = np.mean(knn_values)
+        mean_knn_values.append(mean_knn_val)
+        print(f"Step {step} Mean KNN Sim {mean_knn_val}")
 
-        fig, ax = plt.subplots()
-        plt.ylim(0, embedding1.shape[0])
-        sns.histplot(knn_values, bins=10, kde=False, ax=ax)
-        plt.title(
-            f"Histogram of KNN Match Percentage with {opt.distance_metric} k={opt.k} epoch={epoch}"
-        )
-        plt.savefig(
-            f"experiments/{opt.experiment_id}/knn_sim_hist_{opt.distance_metric}_epoch_{epoch}.png"
-        )
+        plot_knn_hist(knn_values, opt, step)
+
+    plot_knn_line(opt, mean_knn_values)
