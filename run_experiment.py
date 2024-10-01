@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+from box import Box
 from colorama import Back, Fore, Style, init
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -48,9 +49,6 @@ def seed_all(seed):
     torch.backends.cudnn.benchmark = False
 
     return rng
-
-
-seed_all(42)
 
 
 init(autoreset=True)
@@ -96,6 +94,15 @@ def setup_logging(opt):
     logger.propagate = False
 
 
+def log_cfg(cfg, indent=0):
+    for key, value in cfg.items():
+        if isinstance(value, Box):
+            logging.info(" " * indent + f"{key}:")
+            log_cfg(value, indent + 4)
+        else:
+            logging.info(" " * indent + f"{key}: {value}")
+
+
 def calculate_mse_torch(tensor1, tensor2):
     return torch.mean((tensor1 - tensor2) ** 2).item()
 
@@ -117,7 +124,7 @@ def save_loss(
     df.index.name = "Step"
     df["test_perplexities"] = None
     df.at[current_step, "test_perplexities"] = test_perplexity
-    path = os.path.join(opt.viz_dir, "perplexities.csv")
+    path = os.path.join(opt.out_dir, "perplexities.csv")
     df.to_csv(path)
 
 
@@ -155,29 +162,26 @@ def train_model(model, optimizer, opt, model_id):
 
     total_steps = opt.training2.total_steps
     current_step = 0
-    epoch = 0
 
     model.train()
-    input_ids_run_path = os.path.join(
-        opt.model_dir, "data", "train_input_ids.txt"
-    )  # delete later
-    create_folder_if_not_exists(os.path.dirname(input_ids_run_path))  # delete later
+    if opt.training2.save_data:
+        input_ids_run_path = os.path.join(opt.model_dir, "data", "train_input_ids.txt")
+        create_folder_if_not_exists(os.path.dirname(input_ids_run_path))
 
     pbar = tqdm(total=total_steps, desc="Training Progress", leave=False)
 
     while current_step < total_steps:
-        epoch += 1
         total_loss = 0
         total_batches = 0
-        logging.info(f"Epoch: {epoch} ... training")
 
         for batch_idx, (input_ids, targets) in enumerate(train_loader):
             if current_step >= total_steps:
                 break
 
-            with open(input_ids_run_path, "a") as f:  # delete later
-                f.write(f"Step {current_step}, Batch {batch_idx}:\n")  # delete later
-                f.write(" ".join(map(str, input_ids.tolist())) + "\n\n")  # delete later
+            if opt.training2.save_data:
+                with open(input_ids_run_path, "a") as f:
+                    f.write(f"Step {current_step}, Batch {batch_idx}:\n")
+                    f.write(" ".join(map(str, input_ids.tolist())) + "\n\n")
 
             input_ids = input_ids.to(opt.device)
             targets = targets.to(opt.device)
@@ -247,10 +251,9 @@ def test_model(model, opt, dataset="valid"):
     total_samples = 0
 
     eval_steps = opt.training2.eval_steps
-    input_ids_run_path = os.path.join(
-        opt.model_dir, "data", "val_input_ids.txt"
-    )  # delete later
-    create_folder_if_not_exists(os.path.dirname(input_ids_run_path))  # delete later
+    if opt.training2.save_data:
+        input_ids_run_path = os.path.join(opt.model_dir, "data", "val_input_ids.txt")
+        create_folder_if_not_exists(os.path.dirname(input_ids_run_path))
 
     with torch.no_grad():
         pbar = tqdm(
@@ -259,10 +262,10 @@ def test_model(model, opt, dataset="valid"):
         for batch_idx, (input_ids, targets) in enumerate(pbar):
             if eval_steps is not None and total_batches >= eval_steps:
                 break
-
-            with open(input_ids_run_path, "a") as f:  # delete later
-                f.write(f"Step {0}, Batch {batch_idx}:\n")  # delete later
-                f.write(" ".join(map(str, input_ids.tolist())) + "\n\n")  # delete later
+            if opt.training2.save_data:
+                with open(input_ids_run_path, "a") as f:
+                    f.write(f"Step {0}, Batch {batch_idx}:\n")
+                    f.write(" ".join(map(str, input_ids.tolist())) + "\n\n")
 
             input_ids = input_ids.to(opt.device)
             targets = targets.to(opt.device)
@@ -307,11 +310,13 @@ def plot_perplexity(train_perplexities, valid_perplexities, opt):
     if opt.core.plot_title:
         plt.title(opt.core.plot_title)
     else:
-        plt.title(f"Model {opt.model_id} Perplexity")
+        plt.title(
+            f"Experiment {opt.core.experiment_id} Model {opt.model_id} Perplexity"
+        )
     plt.xlabel("Steps")
     plt.ylabel("Perplexity")
     plt.legend()
-    path = os.path.join(opt.viz_dir, f"Model {opt.model_id} Perplexity.png")
+    path = os.path.join(opt.out_dir, f"Model {opt.model_id} Perplexity.png")
     logging.info(f"Saving to {path}")
     plt.savefig(path)
 
@@ -319,7 +324,7 @@ def plot_perplexity(train_perplexities, valid_perplexities, opt):
 def dataloader_testing(opt):
     input_ids_run_path = os.path.join(opt.model_dir, "data", "input_ids.txt")
     create_folder_if_not_exists(os.path.dirname(input_ids_run_path))
-    seed_all(42)
+    seed_all(opt.core.training_seed)
     with open(input_ids_run_path, "w") as f:
         for epoch in range(1, 3):
             for batch_idx, (input_ids, targets) in enumerate(tqdm(opt.train_loader)):
@@ -341,11 +346,12 @@ def experiment(opt):
     os.makedirs(opt.exp_dir, exist_ok=True)
     opt.log_path = os.path.join(opt.exp_dir, f"model{opt.model_id}.log")
     setup_logging(opt)
+    log_cfg(opt)
 
     opt.model_dir = os.path.join(opt.exp_dir, "models", str(opt.model_id))
     opt.wte_dir = os.path.join(opt.model_dir, "wte")
     opt.ckpt_dir = os.path.join(opt.model_dir, "ckpts")
-    opt.viz_dir = os.path.join(opt.model_dir, "viz")
+    opt.out_dir = os.path.join(opt.model_dir, "out")
 
     if os.path.exists(opt.model_dir):
         logging.warning(
@@ -364,7 +370,7 @@ def experiment(opt):
     os.makedirs(opt.model_dir)
     os.makedirs(opt.wte_dir)
     os.makedirs(opt.ckpt_dir)
-    os.makedirs(opt.viz_dir)
+    os.makedirs(opt.out_dir)
     logging.info(f"Experiment directory created ({opt.model_dir})")
 
     exp_str = (
@@ -394,7 +400,7 @@ def experiment(opt):
     test_text = read_corpus(test_text_path, tokenizer, first_n=opt.training2.dev_subset)
     wiki_train = WikiDataset(opt.model.seqlen, train_text, overlapping=True)
     g = torch.Generator()
-    g.manual_seed(0)
+    g.manual_seed(opt.core.training_seed)
     wiki_train_loader = DataLoader(
         wiki_train,
         batch_size=opt.training1.batch_size,
@@ -467,11 +473,9 @@ def main():
     model_id = int(sys.argv[2])
 
     opt = load_experiment_config(experiment_num)
+    seed_all(opt.core.training_seed)
 
-    # print(os.path.join(opt.save_dir, 'experiments'))
-    # sys.exit()
     opt.model_id = model_id
-    # create_folder_if_not_exists("experiments")
     experiment(opt)
 
 

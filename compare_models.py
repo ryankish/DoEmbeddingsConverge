@@ -47,10 +47,10 @@ def main():
     # model1_path = f"experiments/{opt.core.experiment_id}/models/1/ckpts/ckpt_{ckpt}.pt"
     # model2_path = f"experiments/{opt.core.experiment_id}/models/2/ckpts/ckpt_{ckpt}.pt"
 
-    ckpt1 = 7
-    ckpt2 = 0
-    model1_path = f"experiments/0/models/1/ckpts/ckpt_{ckpt1}.pt"
-    model2_path = f"experiments/0/models/1/ckpts/ckpt_{ckpt2}.pt"
+    ckpt1 = 16000
+    ckpt2 = 16000
+    model1_path = f"experiments/1/models/1/ckpts/ckpt_{ckpt1}.pt"
+    model2_path = f"experiments/1/models/2/ckpts/ckpt_{ckpt2}.pt"
 
     model1 = Transformer(
         opt.model.vocab_size,

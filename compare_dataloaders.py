@@ -24,9 +24,17 @@ def compare_input_ids_between_runs(input_ids_run1_path, input_ids_run2_path):
 
 
 def main():
-    input_ids_run1_path = "experiments/0/models/1/data/input_ids.txt"
+    input_ids_run1_path = "experiments/1/models/1/data/train_input_ids.txt"
+    input_ids_run2_path = "experiments/1/models/1/data/train_input_ids.txt"
 
-    input_ids_run2_path = "experiments/0/models/2/data/input_ids.txt"
+    # input_ids_run1_path = "experiments/1/models/1/data/train_input_ids.txt"
+    # input_ids_run2_path = "experiments/1.2/models/2/data/train_input_ids.txt"
+    #
+    # input_ids_run1_path = "experiments/1.2/models/1/data/train_input_ids.txt"
+    # input_ids_run2_path = "experiments/1.2/models/2/data/train_input_ids.txt"
+    #
+    # input_ids_run1_path = "experiments/1/models/1/data/val_input_ids.txt"
+    # input_ids_run2_path = "experiments/1/models/2/data/val_input_ids.txt"
 
     compare_input_ids_between_runs(input_ids_run1_path, input_ids_run2_path)
 

@@ -1,8 +1,9 @@
 from box import Box
 
-# save_dir = ''
-save_dir = '/data/ryan/other'
-device = "cuda:5"
+# save_dir = "/data/ryan/other"
+# device = "cuda:5"
+save_dir = ""
+device = "mps"
 
 experiment_0 = Box(
     {
@@ -10,11 +11,7 @@ experiment_0 = Box(
             "experiment_id": 0,
             "base_init_seed": 0,
             "model1_embed_init_seed": 1,
-            # "model2_embed_init_seed": 2,
-            # "model3_embed_inti_seed": 1,
             "model1_embed_init": "glorot_uniform",
-            # "model2_embed_init": "glorot_uniform",
-            # "model3_embed_init": "glorot_uniform",
             "start_modeler_path": None,
             "lock_weights": False,
             "plot_title": "Baseline Model Perplexity",
@@ -35,15 +32,18 @@ experiment_0 = Box(
             "SGDR": False,
             "sched": None,
             "lr": 0.0001,
-            "dropout": 0.1,
+            "dropout": 0.2,
         },
         "training2": {
-            "epochs": 40,
-            "verbose": False,
             "dev_subset": None,  # for testing purposes only
+            "save_data": False,
+            "total_steps": 16000,
+            "eval_steps": 100,
+            "save_every_n_steps": 1000,
+            "evaluate_every_n_steps": 1000,
         },
-        "device": "cuda:1",
-        "save_dir": save_dir
+        "device": device,
+        "save_dir": save_dir,
     }
 )
 
@@ -54,13 +54,12 @@ experiment_1 = Box(
             "base_init_seed": experiment_0.core.base_init_seed,
             "model1_embed_init_seed": 1,
             "model2_embed_init_seed": 2,
-            # "model3_embed_inti_seed": 3,
+            "training_seed": 1,
             "model1_embed_init": experiment_0.core.model1_embed_init,
             "model2_embed_init": experiment_0.core.model1_embed_init,
-            # "model3_embed_init": 1,
             "starter_model_path": None,
             "lock_weights": False,
-            "plot_title": "Experiment 1 Perplexity",
+            "plot_title": None,
         },
         "run": {
             "test_dataloader": False,
@@ -81,11 +80,15 @@ experiment_1 = Box(
             "dropout": experiment_0.training1.dropout,
         },
         "training2": {
-            "epochs": 40,
             "dev_subset": None,
+            "save_data": experiment_0.training2.save_data,
+            "total_steps": experiment_0.training2.total_steps,
+            "eval_steps": experiment_0.training2.eval_steps,
+            "save_every_n_steps": experiment_0.training2.save_every_n_steps,
+            "evaluate_every_n_steps": experiment_0.training2.evaluate_every_n_steps,
         },
         "device": device,
-        "save_dir": save_dir
+        "save_dir": save_dir,
     }
 )
 
@@ -96,13 +99,12 @@ experiment_2 = Box(
             "base_init_seed": experiment_0.core.base_init_seed,
             "model1_embed_init_seed": 100,
             "model2_embed_init_seed": 200,
-            # "model3_embed_inti_seed": 3,
+            "training_seed": 2,
             "model1_embed_init": experiment_0.core.model1_embed_init,
             "model2_embed_init": experiment_0.core.model1_embed_init,
-            # "model3_embed_init": 1,
-            "starter_model_path": "experiments/0/models/1/ckpts/ckpt_7.pt",
+            "starter_model_path": "experiments/1/models/1/ckpts/ckpt_16000.pt",
             "lock_weights": True,
-            "plot_title": "Experiment 2 Perplexity",
+            "plot_title": None,
         },
         "run": {
             "test_dataloader": False,
@@ -123,10 +125,14 @@ experiment_2 = Box(
             "dropout": experiment_0.training1.dropout,
         },
         "training2": {
-            "epochs": 2,
-            "dev_subset": 12,
+            "dev_subset": None,
+            "save_data": experiment_0.training2.save_data,
+            "total_steps": int(experiment_0.training2.total_steps / 2),
+            "eval_steps": experiment_0.training2.eval_steps,
+            "save_every_n_steps": experiment_0.training2.save_every_n_steps,
+            "evaluate_every_n_steps": experiment_0.training2.evaluate_every_n_steps,
         },
         "device": device,
-        "save_dir": save_dir
+        "save_dir": save_dir,
     }
 )

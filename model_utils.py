@@ -92,8 +92,6 @@ def init_wte(model, strategy, seed):
 
 def init_model(opt):
     model = get_base_model(opt)
-    embed_init_seed = None
-    embed_init_strategy = None
     embed_init_strategy = opt.core[f"model{opt.model_id}_embed_init"]
     embed_init_seed = opt.core[f"model{opt.model_id}_embed_init_seed"]
     init_wte(model, embed_init_strategy, seed=embed_init_seed)
