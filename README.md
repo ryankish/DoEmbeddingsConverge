@@ -1,5 +1,5 @@
-# DoEmbeddingsConverge
-Identical models with different embedding initializations
+# wte-init-semantic-similarity
+Comparing similarity of learned embeddings from transformers with different embedding initializations.
 
 ## To run
 Run the experiments
